@@ -76,7 +76,7 @@ float axis_line(float coord) {
 	float antialias = max(fwidth(coord), 0.0001);
 	float line_width = antialias * 0.9 * thickness;
 	float coverage = 1.0 - smoothstep(line_width, line_width + antialias, abs(coord));
-	return coverage * min(thickness, 1.0);
+	return coverage;
 }
 
 void fragment() {
