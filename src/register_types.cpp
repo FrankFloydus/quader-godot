@@ -5,7 +5,11 @@
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
-#include "example_class.h"
+#include "editor/quader_editor_plugin_host.h"
+#include "editor/quader_editor_window.h"
+#include "render/quader_godot_selection_overlay.h"
+#include "render/quader_godot_transform_gizmo.h"
+#include "viewport/quader_viewport_control.h"
 
 using namespace godot;
 
@@ -14,13 +18,17 @@ void initialize_gdextension_types(ModuleInitializationLevel p_level)
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
-	GDREGISTER_CLASS(ExampleClass);
+	GDREGISTER_CLASS(quader_godot::editor::QuaderEditorPluginHost);
+	GDREGISTER_CLASS(quader_godot::editor::QuaderEditorWindow);
+	GDREGISTER_CLASS(quader_godot::viewport::QuaderViewportControl);
 }
 
 void uninitialize_gdextension_types(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
+	quader_godot::render::clear_overlay_material_cache();
+	quader_godot::render::clear_transform_gizmo_material_cache();
 }
 
 extern "C"

@@ -51,12 +51,23 @@ project(quader-godot
 
 add_library(${LIBNAME} SHARED)
 
+file(GLOB_RECURSE QUADER_GODOT_SOURCES CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/src/*.cpp"
+    "${PROJECT_SOURCE_DIR}/src/*.h"
+    "${PROJECT_SOURCE_DIR}/src/*.hpp")
+list(FILTER QUADER_GODOT_SOURCES EXCLUDE REGEX "/src/gen/")
+
 target_sources(${LIBNAME}
     PRIVATE
-    src/register_types.cpp
-    src/register_types.h
-    src/example_class.cpp
-    src/example_class.h
+    ${QUADER_GODOT_SOURCES}
+)
+
+target_include_directories(${LIBNAME}
+    PRIVATE
+    "${PROJECT_SOURCE_DIR}/src"
+    "${PROJECT_SOURCE_DIR}/src/quader_modeling_sdk/include"
+    "${PROJECT_SOURCE_DIR}/src/quader_modeling_sdk/internal"
+    "${PROJECT_SOURCE_DIR}/src/quader_modeling_sdk/internal/thirdparty"
 )
 
 # Fetch a list of the xml files to use for documentation and add to our target
@@ -71,8 +82,14 @@ endif()
 
 target_link_libraries(${LIBNAME} PRIVATE godot-cpp)
 
-# Require at least C++17 for this target
-set_property(TARGET ${LIBNAME} PROPERTY CXX_STANDARD 17)
+# Quader modeling SDK public APIs use C++20 value contracts.
+set_property(TARGET ${LIBNAME} PROPERTY CXX_STANDARD 20)
+set_property(TARGET ${LIBNAME} PROPERTY CXX_STANDARD_REQUIRED ON)
+
+if(MSVC)
+    target_compile_definitions(${LIBNAME} PRIVATE NOMINMAX)
+    target_compile_options(${LIBNAME} PRIVATE /bigobj)
+endif()
 
 set_target_properties(${LIBNAME}
     PROPERTIES

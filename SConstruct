@@ -35,10 +35,31 @@ Run the following command to download godot-cpp:
     git submodule update --init --recursive""")
     sys.exit(1)
 
-env = SConscript("godot-cpp/SConstruct", {"env": env, "customs": customs})
+env = SConscript("godot-cpp/SConstruct", {"env": env, "customs": customs}).Clone()
 
-env.Append(CPPPATH=["src/"])
-sources = Glob("src/*.cpp")
+env.Append(CPPPATH=[
+    "src/",
+    "src/quader_modeling_sdk/include",
+    "src/quader_modeling_sdk/internal",
+    "src/quader_modeling_sdk/internal/thirdparty",
+])
+
+if env.get("is_msvc", False):
+    env["CXXFLAGS"] = [flag for flag in env.get("CXXFLAGS", []) if flag != "/std:c++17"]
+    env.Append(CXXFLAGS=["/std:c++20"])
+    env.Append(CCFLAGS=["/bigobj", "/EHsc"])
+    env.Append(CPPDEFINES=["NOMINMAX"])
+else:
+    env["CXXFLAGS"] = [flag for flag in env.get("CXXFLAGS", []) if flag != "-std=c++17"]
+    env.Append(CXXFLAGS=["-std=c++20", "-fexceptions"])
+
+sources = []
+for root, _, files in os.walk("src"):
+    if os.path.normpath(root).startswith(os.path.join("src", "gen")):
+        continue
+    for filename in files:
+        if filename.endswith(".cpp"):
+            sources.append(os.path.join(root, filename))
 
 if env["target"] in ["editor", "template_debug"]:
     try:
