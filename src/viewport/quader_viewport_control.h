@@ -4,6 +4,7 @@
 #include "render/quader_godot_render_utils.h"
 #include "render/quader_godot_transform_gizmo.h"
 #include "viewport/quader_camera_controller.h"
+#include "viewport/quader_viewport_selection_mode.h"
 
 #include <godot_cpp/classes/control.hpp>
 #include <godot_cpp/classes/input_event.hpp>
@@ -28,17 +29,23 @@ class WorldEnvironment;
 
 namespace quader_godot::viewport {
 
-enum class SelectionMode {
-	Mesh,
-	Vertex,
-	Edge,
-	Face,
-};
-
 struct TransformDragBounds {
 	bool has_bounds = false;
 	godot::Vector3 min;
 	godot::Vector3 max;
+};
+
+struct BoxConstructionPlane {
+	godot::Vector3 origin;
+	godot::Vector3 snap_origin;
+	godot::Vector3 normal{0.0f, 1.0f, 0.0f};
+	godot::Vector3 axis_u{1.0f, 0.0f, 0.0f};
+	godot::Vector3 axis_v{0.0f, 0.0f, -1.0f};
+};
+
+struct BoxToolFootprint {
+	bool valid = false;
+	godot::Vector3 corners[8];
 };
 
 class QuaderViewportControl : public godot::Control {
@@ -90,6 +97,14 @@ private:
 	void update_transform_drag(godot::Vector2 position);
 	void end_transform_drag();
 	void update_transform_gizmo_hover(godot::Vector2 position);
+	void activate_box_tool();
+	void cancel_box_tool();
+	bool begin_box_drag(godot::Vector2 position);
+	void update_box_drag(godot::Vector2 position);
+	void update_box_hover(godot::Vector2 position);
+	void commit_box_drag(godot::Vector2 position);
+	[[nodiscard]] std::optional<godot::Vector3> box_construction_point(godot::Vector2 position, bool seed_plane);
+	[[nodiscard]] bool update_box_preview(godot::Vector3 raw_start, godot::Vector3 raw_end);
 	void handle_keyboard(double delta);
 	void begin_fly();
 	void end_fly();
@@ -104,7 +119,15 @@ private:
 	bool hover_remove_preview_ = false;
 	bool overlays_dirty_ = true;
 	bool transform_drag_active_ = false;
+	bool box_tool_active_ = false;
+	bool box_drag_active_ = false;
+	bool box_preview_visible_ = false;
 	modeling::SelectionTarget hover_target_;
+	quader::modeling::ObjectId component_source_candidate_;
+	godot::Vector3 box_raw_start_;
+	godot::Vector3 box_raw_end_;
+	BoxConstructionPlane box_plane_;
+	BoxToolFootprint box_preview_;
 	render::TransformGizmoTool transform_tool_ = render::TransformGizmoTool::None;
 	render::TransformGizmoAxis gizmo_hover_axis_ = render::TransformGizmoAxis::None;
 	render::TransformGizmoAxis gizmo_active_axis_ = render::TransformGizmoAxis::None;
@@ -138,6 +161,7 @@ private:
 	godot::MeshInstance3D *selected_vertex_overlay_ = nullptr;
 	godot::MeshInstance3D *hover_vertex_outline_overlay_ = nullptr;
 	godot::MeshInstance3D *hover_vertex_overlay_ = nullptr;
+	godot::MeshInstance3D *box_preview_wire_overlay_ = nullptr;
 	godot::MeshInstance3D *transform_gizmo_line_overlay_ = nullptr;
 	godot::MeshInstance3D *transform_gizmo_triangle_overlay_ = nullptr;
 	QuaderCameraController camera_controller_;

@@ -44,6 +44,10 @@ public:
 	[[nodiscard]] quader::modeling::SelectionSummary selection_summary();
 	quader::modeling::OperationReceipt clear_selection();
 	quader::modeling::OperationReceipt activate_component_source(quader::modeling::ObjectId object);
+	quader::modeling::OperationReceipt create_box_from_bounds(quader::modeling::Vec3 min,
+			quader::modeling::Vec3 max, std::string name = "Box");
+	quader::modeling::OperationReceipt create_box_from_corners(std::span<const quader::modeling::Vec3> corners,
+			std::string name = "Box");
 	quader::modeling::OperationReceipt apply_selection(const SelectionTarget &target,
 			quader::modeling::SelectionEdit edit);
 	quader::modeling::OperationReceipt flip_selected_mesh_normals();
@@ -54,7 +58,6 @@ public:
 			quader::modeling::Vec3 pivot);
 
 private:
-	void create_default_scene();
 	[[nodiscard]] std::vector<MeshObjectSnapshot> snapshots(bool include_render_mesh);
 	[[nodiscard]] quader::modeling::OperationReceipt transform_selected_meshes(
 			const std::function<quader::modeling::OperationReceipt(quader::modeling::MeshHandle)> &operation);

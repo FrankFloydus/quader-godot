@@ -1,6 +1,7 @@
 # Godot auto generated files
 *.gen.*
 .godot/
+build/
 
 # Ignore library files but not the gdextension file
 /bin/**

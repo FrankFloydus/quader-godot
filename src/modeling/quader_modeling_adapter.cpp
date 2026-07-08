@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <functional>
 #include <span>
+#include <utility>
 
 namespace quader_godot::modeling {
 namespace {
@@ -31,9 +32,7 @@ std::vector<quader::modeling::EdgeKey> authored_edges(const quader::modeling::Au
 
 QuaderModelingAdapter::QuaderModelingAdapter()
 		: api_(quader::modeling::ModelingApi::create(
-				  {.error_policy = quader::modeling::ErrorPolicy::StoreLastError})) {
-	create_default_scene();
-}
+				  {.error_policy = quader::modeling::ErrorPolicy::StoreLastError})) {}
 
 std::vector<MeshObjectSnapshot> QuaderModelingAdapter::objects() {
 	return snapshots(true);
@@ -99,6 +98,70 @@ quader::modeling::OperationReceipt QuaderModelingAdapter::activate_component_sou
 	return receipt;
 }
 
+quader::modeling::OperationReceipt QuaderModelingAdapter::create_box_from_bounds(quader::modeling::Vec3 min,
+		quader::modeling::Vec3 max, std::string name) {
+	quader::modeling::Result<quader::modeling::MeshHandle> created = api_.checked().create_box({
+			.name = std::move(name),
+			.min = min,
+			.max = max,
+	});
+	if (!created.ok()) {
+		quader::modeling::OperationReceipt receipt;
+		receipt.success = false;
+		receipt.error = created.error();
+		return receipt;
+	}
+
+	const quader::modeling::ObjectId object = created.value().id();
+	std::vector<quader::modeling::ObjectId> objects{object};
+	quader::modeling::OperationReceipt receipt = api_.meshes().only(objects).replace();
+	if (receipt.success) {
+		mesh_selection_ = objects;
+		active_object_ = object;
+		receipt.changed = true;
+		receipt.dirty.topology = true;
+		receipt.dirty.geometry = true;
+		receipt.dirty.selection = true;
+		receipt.dirty.overlays = true;
+	}
+	return receipt;
+}
+
+quader::modeling::OperationReceipt QuaderModelingAdapter::create_box_from_corners(
+		std::span<const quader::modeling::Vec3> corners, std::string name) {
+	quader::modeling::Result<quader::modeling::PolygonDocument> document =
+			quader::modeling::PolygonDocument::make_box_from_corners(corners);
+	if (!document.ok()) {
+		quader::modeling::OperationReceipt receipt;
+		receipt.success = false;
+		receipt.error = document.error();
+		return receipt;
+	}
+
+	quader::modeling::Result<quader::modeling::MeshHandle> created =
+			api_.checked().add_document(std::move(document).value(), std::move(name));
+	if (!created.ok()) {
+		quader::modeling::OperationReceipt receipt;
+		receipt.success = false;
+		receipt.error = created.error();
+		return receipt;
+	}
+
+	const quader::modeling::ObjectId object = created.value().id();
+	std::vector<quader::modeling::ObjectId> objects{object};
+	quader::modeling::OperationReceipt receipt = api_.meshes().only(objects).replace();
+	if (receipt.success) {
+		mesh_selection_ = objects;
+		active_object_ = object;
+		receipt.changed = true;
+		receipt.dirty.topology = true;
+		receipt.dirty.geometry = true;
+		receipt.dirty.selection = true;
+		receipt.dirty.overlays = true;
+	}
+	return receipt;
+}
+
 quader::modeling::OperationReceipt QuaderModelingAdapter::apply_selection(const SelectionTarget &target,
 		quader::modeling::SelectionEdit edit) {
 	if (target.kind == quader::modeling::SelectionKind::Object) {
@@ -127,6 +190,10 @@ quader::modeling::OperationReceipt QuaderModelingAdapter::apply_selection(const 
 		return receipt;
 	}
 
+	const std::vector<quader::modeling::ObjectId> selected_before = api_.selection().summary().objects;
+	const bool was_edit_target = active_object_ == target.object ||
+			std::find(selected_before.begin(), selected_before.end(), target.object) != selected_before.end();
+
 	if (edit == quader::modeling::SelectionEdit::Replace) {
 		static_cast<void>(clear_selection());
 		std::vector<quader::modeling::ObjectId> objects{target.object};
@@ -141,16 +208,41 @@ quader::modeling::OperationReceipt QuaderModelingAdapter::apply_selection(const 
 		active_object_ = target.object;
 	}
 
+	quader::modeling::OperationReceipt receipt;
 	if (target.kind == quader::modeling::SelectionKind::Vertex) {
 		std::vector<quader::modeling::VertexId> vertices{target.vertex};
-		return api_.mesh(target.object).vertices().only(vertices).apply(edit);
-	}
-	if (target.kind == quader::modeling::SelectionKind::Edge) {
+		receipt = api_.mesh(target.object).vertices().only(vertices).apply(edit);
+	} else if (target.kind == quader::modeling::SelectionKind::Edge) {
 		std::vector<quader::modeling::EdgeKey> edges{target.edge};
-		return api_.mesh(target.object).edges().only(edges).apply(edit);
+		receipt = api_.mesh(target.object).edges().only(edges).apply(edit);
+	} else {
+		std::vector<quader::modeling::FaceId> faces{target.face};
+		receipt = api_.mesh(target.object).faces().only(faces).apply(edit);
 	}
-	std::vector<quader::modeling::FaceId> faces{target.face};
-	return api_.mesh(target.object).faces().only(faces).apply(edit);
+
+	if (receipt.success && edit == quader::modeling::SelectionEdit::Remove && was_edit_target) {
+		bool selection_empty = true;
+		quader::modeling::MeshHandle mesh = api_.mesh(target.object);
+		if (target.kind == quader::modeling::SelectionKind::Vertex) {
+			selection_empty = mesh.vertices().selected().empty();
+		} else if (target.kind == quader::modeling::SelectionKind::Edge) {
+			selection_empty = mesh.edges().selected().empty();
+		} else if (target.kind == quader::modeling::SelectionKind::Face) {
+			selection_empty = mesh.faces().selected().empty();
+		}
+		if (selection_empty) {
+			std::vector<quader::modeling::ObjectId> objects{target.object};
+			const quader::modeling::OperationReceipt keep_target = api_.meshes().only(objects).add();
+			if (keep_target.success) {
+				active_object_ = target.object;
+				receipt.changed = receipt.changed || keep_target.changed;
+				receipt.dirty.selection = true;
+				receipt.dirty.overlays = true;
+			}
+		}
+	}
+
+	return receipt;
 }
 
 quader::modeling::OperationReceipt QuaderModelingAdapter::flip_selected_mesh_normals() {
@@ -178,17 +270,6 @@ quader::modeling::OperationReceipt QuaderModelingAdapter::scale_selected_meshes(
 		quader::modeling::Vec3 pivot) {
 	return transform_selected_meshes(
 			[&](quader::modeling::MeshHandle mesh) { return mesh.transform().scale({.scale = scale, .pivot = pivot}); });
-}
-
-void QuaderModelingAdapter::create_default_scene() {
-	static_cast<void>(api_.create_box({
-			.name = "QuaderCubeA",
-	}));
-	static_cast<void>(api_.create_box({
-			.name = "QuaderCubeB",
-			.min = {3.0F, -1.0F, -1.0F},
-			.max = {5.0F, 1.0F, 1.0F},
-	}));
 }
 
 quader::modeling::OperationReceipt QuaderModelingAdapter::transform_selected_meshes(

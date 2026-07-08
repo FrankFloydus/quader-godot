@@ -3,6 +3,7 @@
 #include "render/quader_godot_render_utils.h"
 #include "render/quader_godot_selection_overlay.h"
 #include "render/quader_godot_transform_gizmo.h"
+#include "viewport/quader_component_source_policy.h"
 
 #include <godot_cpp/classes/array_mesh.hpp>
 #include <godot_cpp/classes/camera3d.hpp>
@@ -52,6 +53,8 @@ struct PickHit {
 	bool hit = false;
 	float distance = std::numeric_limits<float>::max();
 	float depth = std::numeric_limits<float>::max();
+	godot::Vector3 position;
+	godot::Vector3 normal{0.0f, 1.0f, 0.0f};
 	modeling::SelectionTarget target;
 };
 
@@ -64,6 +67,9 @@ constexpr float kScalePixelsPerFactor = 96.0f;
 constexpr float kMinScaleFactor = 0.01f;
 constexpr float kPi = 3.14159265358979323846f;
 constexpr float kRotateSnapRadians = kPi / 12.0f;
+constexpr float kBoxPreviewDashPixels = 8.0f;
+constexpr float kBoxPreviewDashGapPixels = 5.0f;
+constexpr float kBoxPreviewLineWidthPixels = 2.0f;
 constexpr int kSelectedFaceRenderPriority = godot::Material::RENDER_PRIORITY_MAX - 20;
 constexpr int kHoverFaceRenderPriority = godot::Material::RENDER_PRIORITY_MAX - 19;
 constexpr int kSourceWireRenderPriority = godot::Material::RENDER_PRIORITY_MAX - 16;
@@ -74,6 +80,7 @@ constexpr int kSelectedVertexOutlineRenderPriority = godot::Material::RENDER_PRI
 constexpr int kVertexSelectedRenderPriority = godot::Material::RENDER_PRIORITY_MAX - 7;
 constexpr int kHoverVertexOutlineRenderPriority = godot::Material::RENDER_PRIORITY_MAX - 6;
 constexpr int kVertexHoverRenderPriority = godot::Material::RENDER_PRIORITY_MAX - 5;
+constexpr int kBoxPreviewRenderPriority = godot::Material::RENDER_PRIORITY_MAX - 3;
 
 bool keyboard_shift_pressed() {
 	godot::Input *input = godot::Input::get_singleton();
@@ -163,6 +170,157 @@ float grid_world_size_for_preset(int preset) {
 	};
 	const int clamped = std::clamp(preset, 1, static_cast<int>(kPresetWorldSizes.size()));
 	return kPresetWorldSizes[static_cast<std::size_t>(clamped - 1)];
+}
+
+godot::Color box_preview_line_color() {
+	return {1.0f, 235.0f / 255.0f, 41.0f / 255.0f, 209.0f / 255.0f};
+}
+
+float safe_box_grid_size(float grid_size) {
+	return std::isfinite(grid_size) && grid_size > kToolEpsilon ? grid_size : 1.0f;
+}
+
+std::pair<float, float> directional_snap_pair(float start, float end, float grid_size) {
+	const float grid = safe_box_grid_size(grid_size);
+	if (end >= start) {
+		const float start_snap = std::floor(start / grid) * grid;
+		float end_snap = std::ceil(end / grid) * grid;
+		if (end_snap - start_snap <= kToolEpsilon) {
+			end_snap = start_snap + grid;
+		}
+		return {start_snap, end_snap};
+	}
+
+	const float start_snap = std::ceil(start / grid) * grid;
+	float end_snap = std::floor(end / grid) * grid;
+	if (start_snap - end_snap <= kToolEpsilon) {
+		end_snap = start_snap - grid;
+	}
+	return {start_snap, end_snap};
+}
+
+godot::Vector3 normalized_or(godot::Vector3 value, godot::Vector3 fallback) {
+	if (value.length_squared() <= kToolEpsilon * kToolEpsilon) {
+		return fallback;
+	}
+	return value.normalized();
+}
+
+godot::Vector3 project_point_to_plane(godot::Vector3 point, godot::Vector3 origin, godot::Vector3 normal) {
+	const godot::Vector3 safe_normal = normalized_or(normal, {0.0f, 1.0f, 0.0f});
+	return point - safe_normal * ((point - origin).dot(safe_normal));
+}
+
+BoxConstructionPlane make_box_construction_plane(godot::Vector3 origin, godot::Vector3 normal) {
+	BoxConstructionPlane plane;
+	plane.origin = origin;
+	plane.normal = normalized_or(normal, {0.0f, 1.0f, 0.0f});
+	plane.snap_origin = project_point_to_plane({}, plane.origin, plane.normal);
+
+	godot::Vector3 preferred{1.0f, 0.0f, 0.0f};
+	if (std::abs(plane.normal.dot(preferred)) > 0.9f) {
+		preferred = {0.0f, 0.0f, 1.0f};
+	}
+	godot::Vector3 candidate_u = preferred - plane.normal * preferred.dot(plane.normal);
+	if (candidate_u.length_squared() <= kToolEpsilon * kToolEpsilon) {
+		const float ax = std::abs(plane.normal.x);
+		const float ay = std::abs(plane.normal.y);
+		const float az = std::abs(plane.normal.z);
+		godot::Vector3 reference{1.0f, 0.0f, 0.0f};
+		if (ay <= ax && ay <= az) {
+			reference = {0.0f, 1.0f, 0.0f};
+		} else if (az <= ax && az <= ay) {
+			reference = {0.0f, 0.0f, 1.0f};
+		}
+		candidate_u = reference - plane.normal * reference.dot(plane.normal);
+	}
+	plane.axis_u = normalized_or(candidate_u, {1.0f, 0.0f, 0.0f});
+	plane.axis_v = normalized_or(plane.normal.cross(plane.axis_u), {0.0f, 0.0f, -1.0f});
+	return plane;
+}
+
+godot::Vector3 box_plane_point(const BoxConstructionPlane &plane, float u, float v) {
+	return plane.snap_origin + plane.axis_u * u + plane.axis_v * v;
+}
+
+bool intersect_ray_plane(const Ray &ray, const BoxConstructionPlane &plane, godot::Vector3 &point) {
+	const float denominator = ray.direction.dot(plane.normal);
+	if (std::abs(denominator) <= kToolEpsilon) {
+		return false;
+	}
+	const float distance = (plane.origin - ray.origin).dot(plane.normal) / denominator;
+	if (!std::isfinite(distance) || distance < 0.0f) {
+		return false;
+	}
+	point = ray.origin + ray.direction * distance;
+	return true;
+}
+
+BoxToolFootprint make_box_tool_footprint(const BoxConstructionPlane &plane, godot::Vector3 raw_start,
+		godot::Vector3 raw_end, float grid_size) {
+	if (plane.normal.length_squared() <= kToolEpsilon * kToolEpsilon ||
+			plane.axis_u.length_squared() <= kToolEpsilon * kToolEpsilon ||
+			plane.axis_v.length_squared() <= kToolEpsilon * kToolEpsilon) {
+		return {};
+	}
+	const godot::Vector3 raw_start_delta = raw_start - plane.snap_origin;
+	const godot::Vector3 raw_end_delta = raw_end - plane.snap_origin;
+	const std::pair<float, float> u =
+			directional_snap_pair(raw_start_delta.dot(plane.axis_u), raw_end_delta.dot(plane.axis_u), grid_size);
+	const std::pair<float, float> v =
+			directional_snap_pair(raw_start_delta.dot(plane.axis_v), raw_end_delta.dot(plane.axis_v), grid_size);
+	const float height = safe_box_grid_size(grid_size);
+	BoxToolFootprint footprint;
+	footprint.valid = true;
+	footprint.corners[0] = box_plane_point(plane, u.first, v.first);
+	footprint.corners[1] = box_plane_point(plane, u.first, v.second);
+	footprint.corners[2] = box_plane_point(plane, u.second, v.second);
+	footprint.corners[3] = box_plane_point(plane, u.second, v.first);
+	const godot::Vector3 height_offset = plane.normal * height;
+	for (std::size_t index = 0; index < 4U; ++index) {
+		footprint.corners[index + 4U] = footprint.corners[index] + height_offset;
+	}
+	return footprint;
+}
+
+bool camera_can_see_point(const godot::Camera3D *camera, godot::Vector3 point) {
+	const godot::Vector3 forward = -camera->get_global_transform().basis.get_column(2).normalized();
+	const float depth = (point - camera->get_global_transform().origin).dot(forward);
+	return depth > std::max(static_cast<float>(camera->get_near()), 0.0001f);
+}
+
+void append_dashed_box_preview_edge(const godot::Camera3D *camera, godot::Vector3 start, godot::Vector3 end,
+		std::vector<render::OverlaySegment> &segments) {
+	if (camera == nullptr || !camera_can_see_point(camera, start) || !camera_can_see_point(camera, end)) {
+		return;
+	}
+	const godot::Vector2 screen_start = camera->unproject_position(start);
+	const godot::Vector2 screen_end = camera->unproject_position(end);
+	const godot::Vector2 screen_delta = screen_end - screen_start;
+	const float edge_length = screen_delta.length();
+	if (edge_length <= 0.001f) {
+		return;
+	}
+	const godot::Vector3 world_delta = end - start;
+	for (float offset = 0.0f; offset < edge_length; offset += kBoxPreviewDashPixels + kBoxPreviewDashGapPixels) {
+		const float segment_end = std::min(offset + kBoxPreviewDashPixels, edge_length);
+		const float start_t = offset / edge_length;
+		const float end_t = segment_end / edge_length;
+		segments.push_back({
+				start + world_delta * start_t,
+				start + world_delta * end_t,
+		});
+	}
+}
+
+void append_box_preview_segments(const godot::Camera3D *camera, const BoxToolFootprint &footprint,
+		std::vector<render::OverlaySegment> &segments) {
+	if (!footprint.valid) {
+		return;
+	}
+	for (std::size_t index = 0; index < 4U; ++index) {
+		append_dashed_box_preview_edge(camera, footprint.corners[index], footprint.corners[(index + 1U) % 4U], segments);
+	}
 }
 
 bool same_object(ObjectId a, ObjectId b) {
@@ -409,10 +567,6 @@ bool target_selected(const modeling::MeshObjectSnapshot &object, const modeling:
 	return false;
 }
 
-bool has_component_selection(const modeling::MeshObjectSnapshot &object) {
-	return !object.selected_vertices.empty() || !object.selected_edges.empty() || !object.selected_faces.empty();
-}
-
 bool component_selected(const modeling::MeshObjectSnapshot &object, SelectionKind kind, VertexId vertex, EdgeKey edge) {
 	if (kind == SelectionKind::Vertex) {
 		return contains_id<VertexId>(object.selected_vertices, vertex);
@@ -421,6 +575,23 @@ bool component_selected(const modeling::MeshObjectSnapshot &object, SelectionKin
 		return contains_id<EdgeKey>(object.selected_edges, edge);
 	}
 	return false;
+}
+
+std::vector<ComponentSourceObjectState> component_source_states(
+		const std::vector<modeling::MeshObjectSnapshot> &objects) {
+	std::vector<ComponentSourceObjectState> states;
+	states.reserve(objects.size());
+	for (const modeling::MeshObjectSnapshot &object : objects) {
+		states.push_back({
+				.object = object.object,
+				.selected = object.selected,
+				.active = object.active,
+				.has_selected_vertices = !object.selected_vertices.empty(),
+				.has_selected_edges = !object.selected_edges.empty(),
+				.has_selected_faces = !object.selected_faces.empty(),
+		});
+	}
+	return states;
 }
 
 godot::Vector3 to_godot(Vec3 value) {
@@ -724,6 +895,10 @@ PickHit pick_face_target(const std::vector<modeling::MeshObjectSnapshot> &object
 					best.hit = true;
 					best.depth = depth;
 					best.distance = 0.0f;
+					best.position = ray.origin + ray.direction * depth;
+					const std::optional<godot::Vector3> normal = face_normal(object.authored, face);
+					best.normal = normal.value_or(normalized_or((*b - *origin).cross(*c - *origin),
+							{0.0f, 1.0f, 0.0f}));
 					best.target.object = object.object;
 					if (kind == SelectionKind::Object) {
 						best.target.kind = SelectionKind::Object;
@@ -760,6 +935,10 @@ PickHit pick_face_target(const modeling::MeshObjectSnapshot &object, const Ray &
 				best.hit = true;
 				best.depth = depth;
 				best.distance = 0.0f;
+				best.position = ray.origin + ray.direction * depth;
+				const std::optional<godot::Vector3> normal = face_normal(object.authored, face);
+				best.normal = normal.value_or(normalized_or((*b - *origin).cross(*c - *origin),
+						{0.0f, 1.0f, 0.0f}));
 				best.target.object = object.object;
 				if (kind == SelectionKind::Object) {
 					best.target.kind = SelectionKind::Object;
@@ -795,37 +974,15 @@ bool component_pick_occluded(float component_depth, const PickHit &surface_hit,
 }
 
 PickHit pick_vertex_target(const std::vector<modeling::MeshObjectSnapshot> &objects, const Ray &ray, float radius,
-		ObjectId source_object) {
-	PickHit best;
-	best.target.kind = SelectionKind::Vertex;
+		std::span<const ObjectId> source_objects, bool prefer_selected_target) {
+	PickHit best_selected;
+	best_selected.target.kind = SelectionKind::Vertex;
+	PickHit best_unselected;
+	best_unselected.target.kind = SelectionKind::Vertex;
 	for (const modeling::MeshObjectSnapshot &object : objects) {
-		const PickHit surface_hit = pick_face_target(object, ray, SelectionKind::Face);
-		for (VertexId vertex : object.selected_vertices) {
-			const std::optional<godot::Vector3> position = vertex_position(object.authored, vertex);
-			if (!position.has_value()) {
-				continue;
-			}
-			float depth = 0.0f;
-			const float distance = point_ray_distance(*position, ray, depth);
-			if (component_pick_occluded(depth, surface_hit, object, SelectionKind::Vertex, vertex)) {
-				continue;
-			}
-			if (distance <= radius * 1.35f &&
-					(distance < best.distance || (distance == best.distance && depth < best.depth))) {
-				best.hit = true;
-				best.distance = distance;
-				best.depth = depth;
-				best.target.object = object.object;
-				best.target.vertex = vertex;
-			}
-		}
-	}
-	if (best.hit) {
-		return best;
-	}
-	for (const modeling::MeshObjectSnapshot &object : objects) {
-		const bool source_wire_object = same_object(object.object, source_object);
-		if (source_object.valid() && !source_wire_object) {
+		const bool source_wire_object =
+				object.selected || std::find(source_objects.begin(), source_objects.end(), object.object) != source_objects.end();
+		if (!source_wire_object) {
 			continue;
 		}
 		const PickHit surface_hit = pick_face_target(object, ray, SelectionKind::Face);
@@ -836,6 +993,8 @@ PickHit pick_vertex_target(const std::vector<modeling::MeshObjectSnapshot> &obje
 						object.authored.vertices[index])) {
 				continue;
 			}
+			const bool selected = contains_id<VertexId>(object.selected_vertices, object.authored.vertices[index]);
+			PickHit &best = selected ? best_selected : best_unselected;
 			if (distance <= radius && (distance < best.distance || (distance == best.distance && depth < best.depth))) {
 				best.hit = true;
 				best.distance = distance;
@@ -845,42 +1004,26 @@ PickHit pick_vertex_target(const std::vector<modeling::MeshObjectSnapshot> &obje
 			}
 		}
 	}
-	return best;
+	if (!best_selected.hit) {
+		return best_unselected;
+	}
+	if (!best_unselected.hit) {
+		return best_selected;
+	}
+	const float selected_tolerance = prefer_selected_target ? radius : std::max(kToolEpsilon, radius * 0.25f);
+	return best_selected.distance <= best_unselected.distance + selected_tolerance ? best_selected : best_unselected;
 }
 
 PickHit pick_edge_target(const std::vector<modeling::MeshObjectSnapshot> &objects, const Ray &ray, float radius,
-		ObjectId source_object) {
-	PickHit best;
-	best.target.kind = SelectionKind::Edge;
+		std::span<const ObjectId> source_objects, bool prefer_selected_target) {
+	PickHit best_selected;
+	best_selected.target.kind = SelectionKind::Edge;
+	PickHit best_unselected;
+	best_unselected.target.kind = SelectionKind::Edge;
 	for (const modeling::MeshObjectSnapshot &object : objects) {
-		const PickHit surface_hit = pick_face_target(object, ray, SelectionKind::Face);
-		for (const EdgeKey &edge : object.selected_edges) {
-			const std::optional<godot::Vector3> a = vertex_position(object.authored, edge.a);
-			const std::optional<godot::Vector3> b = vertex_position(object.authored, edge.b);
-			if (!a.has_value() || !b.has_value()) {
-				continue;
-			}
-			float depth = 0.0f;
-			const float distance = segment_ray_distance(*a, *b, ray, depth);
-			if (component_pick_occluded(depth, surface_hit, object, SelectionKind::Edge, {}, edge)) {
-				continue;
-			}
-			if (distance <= radius * 1.35f &&
-					(distance < best.distance || (distance == best.distance && depth < best.depth))) {
-				best.hit = true;
-				best.distance = distance;
-				best.depth = depth;
-				best.target.object = object.object;
-				best.target.edge = edge;
-			}
-		}
-	}
-	if (best.hit) {
-		return best;
-	}
-	for (const modeling::MeshObjectSnapshot &object : objects) {
-		const bool source_wire_object = same_object(object.object, source_object);
-		if (source_object.valid() && !source_wire_object) {
+		const bool source_wire_object =
+				object.selected || std::find(source_objects.begin(), source_objects.end(), object.object) != source_objects.end();
+		if (!source_wire_object) {
 			continue;
 		}
 		const PickHit surface_hit = pick_face_target(object, ray, SelectionKind::Face);
@@ -895,6 +1038,8 @@ PickHit pick_edge_target(const std::vector<modeling::MeshObjectSnapshot> &object
 			if (component_pick_occluded(depth, surface_hit, object, SelectionKind::Edge, {}, edge)) {
 				continue;
 			}
+			const bool selected = contains_id<EdgeKey>(object.selected_edges, edge);
+			PickHit &best = selected ? best_selected : best_unselected;
 			if (distance <= radius && (distance < best.distance || (distance == best.distance && depth < best.depth))) {
 				best.hit = true;
 				best.distance = distance;
@@ -904,7 +1049,14 @@ PickHit pick_edge_target(const std::vector<modeling::MeshObjectSnapshot> &object
 			}
 		}
 	}
-	return best;
+	if (!best_selected.hit) {
+		return best_unselected;
+	}
+	if (!best_unselected.hit) {
+		return best_selected;
+	}
+	const float selected_tolerance = prefer_selected_target ? radius : std::max(kToolEpsilon, radius * 0.25f);
+	return best_selected.distance <= best_unselected.distance + selected_tolerance ? best_selected : best_unselected;
 }
 
 SelectionEdit edit_from_modifiers(bool shift, bool remove) {
@@ -915,34 +1067,6 @@ SelectionEdit edit_from_modifiers(bool shift, bool remove) {
 		return SelectionEdit::Add;
 	}
 	return SelectionEdit::Replace;
-}
-
-ObjectId component_source_object(const std::vector<modeling::MeshObjectSnapshot> &objects,
-		const std::optional<modeling::SelectionTarget> &hover_target) {
-	for (const modeling::MeshObjectSnapshot &object : objects) {
-		if (object.active && (object.selected || has_component_selection(object))) {
-			return object.object;
-		}
-	}
-	for (const modeling::MeshObjectSnapshot &object : objects) {
-		if (has_component_selection(object)) {
-			return object.object;
-		}
-	}
-	if (hover_target.has_value() && hover_target->kind != SelectionKind::Object) {
-		return hover_target->object;
-	}
-	for (const modeling::MeshObjectSnapshot &object : objects) {
-		if (object.active) {
-			return object.object;
-		}
-	}
-	for (const modeling::MeshObjectSnapshot &object : objects) {
-		if (object.selected) {
-			return object.object;
-		}
-	}
-	return {};
 }
 
 godot::MeshInstance3D *make_overlay_instance(const char *name, godot::Node3D *parent) {
@@ -971,6 +1095,7 @@ void QuaderViewportControl::release_mouse_capture() {
 	orbiting_ = false;
 	panning_ = false;
 	end_transform_drag();
+	box_drag_active_ = false;
 	if (fly_active_) {
 		end_fly();
 	}
@@ -1001,6 +1126,11 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 		if (button == godot::MOUSE_BUTTON_LEFT) {
 			if (mouse_button->is_pressed()) {
 				grab_focus();
+				if (box_tool_active_) {
+					static_cast<void>(begin_box_drag(mouse_button->get_position()));
+					accept_event();
+					return;
+				}
 				if (begin_transform_drag(mouse_button->get_position())) {
 					accept_event();
 					return;
@@ -1013,6 +1143,11 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 					update_hover(mouse_button->get_position(), remove);
 				}
 			} else {
+				if (box_drag_active_) {
+					commit_box_drag(mouse_button->get_position());
+					accept_event();
+					return;
+				}
 				end_transform_drag();
 			}
 			accept_event();
@@ -1058,6 +1193,11 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 		const godot::Vector2 relative = mouse_motion->get_relative();
 		const godot::Vector2 quader_delta{-relative.x, relative.y};
 		const bool shift_pressed = mouse_motion->is_shift_pressed() || keyboard_shift_pressed();
+		if (box_drag_active_) {
+			update_box_drag(mouse_motion->get_position());
+			accept_event();
+			return;
+		}
 		if (transform_drag_active_) {
 			update_transform_drag(mouse_motion->get_position());
 			accept_event();
@@ -1080,6 +1220,11 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 		if (fly_active_) {
 			camera_controller_.fly_look(quader_delta);
 			update_camera();
+			accept_event();
+			return;
+		}
+		if (box_tool_active_) {
+			update_box_hover(mouse_motion->get_position());
 			accept_event();
 			return;
 		}
@@ -1109,12 +1254,24 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 			}
 			return;
 		}
+		if (key->get_keycode() == godot::KEY_ESCAPE && box_tool_active_) {
+			cancel_box_tool();
+			accept_event();
+			return;
+		}
+		if (key->get_keycode() == godot::KEY_B) {
+			activate_box_tool();
+			accept_event();
+			return;
+		}
 		if (const std::optional<render::TransformGizmoTool> tool = transform_tool_for_key(key->get_keycode())) {
+			cancel_box_tool();
 			set_transform_tool(*tool);
 			accept_event();
 			return;
 		}
 		if (const std::optional<SelectionMode> mode = selection_mode_for_key(key->get_keycode())) {
+			cancel_box_tool();
 			selection_mode_ = *mode;
 			clear_hover();
 			gizmo_hover_axis_ = render::TransformGizmoAxis::None;
@@ -1223,6 +1380,7 @@ void QuaderViewportControl::build_viewport() {
 	selected_vertex_overlay_ = make_overlay_instance("SelectedVertexOverlay", overlay_root_);
 	hover_vertex_outline_overlay_ = make_overlay_instance("HoverVertexOutlineOverlay", overlay_root_);
 	hover_vertex_overlay_ = make_overlay_instance("HoverVertexOverlay", overlay_root_);
+	box_preview_wire_overlay_ = make_overlay_instance("BoxPreviewWireOverlay", overlay_root_);
 	transform_gizmo_triangle_overlay_ = make_overlay_instance("TransformGizmoTriangleOverlay", overlay_root_);
 	transform_gizmo_line_overlay_ = make_overlay_instance("TransformGizmoLineOverlay", overlay_root_);
 
@@ -1289,13 +1447,19 @@ void QuaderViewportControl::refresh_overlays() {
 	std::vector<render::OverlaySegment> source_wire;
 	std::vector<render::OverlaySegment> selection_wire;
 	std::vector<render::OverlaySegment> hover_wire;
+	std::vector<render::OverlaySegment> box_preview_wire;
 	std::vector<godot::Vector3> vertex_points;
 	std::vector<godot::Vector3> selected_vertex_points;
 	std::vector<godot::Vector3> hover_vertex_points;
 	bool hover_target_selected = false;
 	const bool component_mode = selection_mode_ != SelectionMode::Mesh;
-	const std::optional<modeling::SelectionTarget> source_hover = has_hover_ ? std::optional{hover_target_} : std::nullopt;
-	const ObjectId source_object = component_mode ? component_source_object(objects, source_hover) : ObjectId{};
+	const std::vector<ComponentSourceObjectState> source_states = component_source_states(objects);
+	const std::vector<ObjectId> source_objects =
+			component_mode ? component_source_wire_objects(source_states, selection_mode_, component_source_candidate_)
+						   : std::vector<ObjectId>{};
+	const std::vector<ObjectId> vertex_handle_objects =
+			component_mode ? component_vertex_handle_objects(source_states, selection_mode_, component_source_candidate_)
+						   : std::vector<ObjectId>{};
 	bool source_component_draw_on_top = false;
 
 	for (const modeling::MeshObjectSnapshot &object : objects) {
@@ -1304,13 +1468,18 @@ void QuaderViewportControl::refresh_overlays() {
 			append_all_edge_segments(object, selection_wire);
 		}
 
-		if (component_mode && object.object == source_object) {
+		const bool draws_source_wire = std::find(source_objects.begin(), source_objects.end(), object.object) != source_objects.end();
+		if (component_mode && draws_source_wire) {
 			append_all_edge_segments(object, source_wire);
-			source_component_draw_on_top = authored_faces_are_inside_out(object.authored);
-			if (selection_mode_ == SelectionMode::Vertex) {
-				std::vector<godot::Vector3> object_vertices = all_vertex_points(object.authored);
-				vertex_points.insert(vertex_points.end(), object_vertices.begin(), object_vertices.end());
-			}
+			source_component_draw_on_top = source_component_draw_on_top || authored_faces_are_inside_out(object.authored);
+		}
+
+		const bool draws_vertex_handles =
+				std::find(vertex_handle_objects.begin(), vertex_handle_objects.end(), object.object) !=
+				vertex_handle_objects.end();
+		if (component_mode && draws_vertex_handles) {
+			std::vector<godot::Vector3> object_vertices = all_vertex_points(object.authored);
+			vertex_points.insert(vertex_points.end(), object_vertices.begin(), object_vertices.end());
 		}
 
 		if (component_mode) {
@@ -1321,13 +1490,17 @@ void QuaderViewportControl::refresh_overlays() {
 					}
 				}
 			}
-			for (EdgeKey edge : object.selected_edges) {
-				append_edge_segment(object, edge, selection_wire);
+			if (selection_mode_ == SelectionMode::Edge) {
+				for (EdgeKey edge : object.selected_edges) {
+					append_edge_segment(object, edge, selection_wire);
+				}
 			}
-			for (FaceId face_id : object.selected_faces) {
-				if (const AuthoredPolygonFacePayload *face = find_face(object.authored, face_id)) {
-					append_face_triangles(object.authored, *face, selection_faces);
-					append_face_segments(object.authored, *face, selection_wire);
+			if (selection_mode_ == SelectionMode::Face) {
+				for (FaceId face_id : object.selected_faces) {
+					if (const AuthoredPolygonFacePayload *face = find_face(object.authored, face_id)) {
+						append_face_triangles(object.authored, *face, selection_faces);
+						append_face_segments(object.authored, *face, selection_wire);
+					}
 				}
 			}
 		}
@@ -1348,6 +1521,10 @@ void QuaderViewportControl::refresh_overlays() {
 				append_face_segments(object.authored, *face, hover_wire);
 			}
 		}
+	}
+
+	if (box_preview_visible_) {
+		append_box_preview_segments(camera_, box_preview_, box_preview_wire);
 	}
 
 	const bool remove_preview = component_mode && hover_target_.kind != SelectionKind::Object &&
@@ -1426,6 +1603,9 @@ void QuaderViewportControl::refresh_overlays() {
 					vertex_draw_on_top ? 0.0f : hover_point_depth_bias),
 			render::make_overlay_point_material(hover_vertex_color, vertex_draw_on_top, kVertexHoverRenderPriority,
 					hover_clip_depth_bias));
+	set_overlay_mesh(box_preview_wire_overlay_,
+			render::make_overlay_line_mesh(box_preview_wire, camera_, viewport_size, kBoxPreviewLineWidthPixels),
+			render::make_overlay_line_material(box_preview_line_color(), true, kBoxPreviewRenderPriority));
 
 	render::TransformGizmoMeshes gizmo_meshes = render::make_transform_gizmo_meshes(transform_gizmo_input(objects));
 	set_overlay_mesh(transform_gizmo_triangle_overlay_, gizmo_meshes.triangles,
@@ -1473,21 +1653,37 @@ void QuaderViewportControl::update_hover(godot::Vector2 position, bool remove_pr
 	const std::vector<modeling::MeshObjectSnapshot> objects = modeling_.overlay_objects();
 	const Ray ray = make_ray(camera_, position);
 	const PickHit surface_hit = pick_face_target(objects, ray, SelectionKind::Face);
-	const ObjectId source_object =
-			selection_mode_ == SelectionMode::Mesh ? ObjectId{} : component_source_object(objects, std::nullopt);
+	const std::vector<ComponentSourceObjectState> source_states = component_source_states(objects);
+	const ObjectId hover_candidate = component_hover_candidate(selection_mode_, component_source_candidate_,
+			surface_hit.hit ? surface_hit.target.object : ObjectId{});
+	const std::vector<ObjectId> source_objects =
+			selection_mode_ == SelectionMode::Mesh
+					? std::vector<ObjectId>{}
+					: component_source_wire_objects(source_states, selection_mode_, hover_candidate);
 	PickHit hit;
 	if (selection_mode_ == SelectionMode::Mesh) {
 		hit = pick_face_target(objects, ray, SelectionKind::Object);
 	} else if (selection_mode_ == SelectionMode::Vertex) {
-		hit = pick_vertex_target(objects, ray, visual_settings_.pick_vertex_radius, source_object);
+		hit = pick_vertex_target(objects, ray, visual_settings_.pick_vertex_radius, source_objects, remove_preview);
 	} else if (selection_mode_ == SelectionMode::Edge) {
-		hit = pick_edge_target(objects, ray, visual_settings_.pick_edge_radius, source_object);
+		hit = pick_edge_target(objects, ray, visual_settings_.pick_edge_radius, source_objects, remove_preview);
 	} else {
 		hit = surface_hit;
 	}
+	if (selection_mode_ != SelectionMode::Mesh && hover_candidate != component_source_candidate_) {
+		component_source_candidate_ = hover_candidate;
+	}
 	if (!hit.hit) {
+		if (selection_mode_ != SelectionMode::Mesh && component_source_candidate_.valid()) {
+			clear_hover();
+			invalidate_overlays();
+			return;
+		}
 		clear_hover();
 		return;
+	}
+	if (hit.target.object.valid()) {
+		component_source_candidate_ = hit.target.object;
 	}
 	const bool changed = !has_hover_ || hover_remove_preview_ != remove_preview ||
 			!same_selection_target(hover_target_, hit.target);
@@ -1506,23 +1702,34 @@ bool QuaderViewportControl::select_at(godot::Vector2 position, SelectionEdit edi
 	const std::vector<modeling::MeshObjectSnapshot> objects = modeling_.overlay_objects();
 	const Ray ray = make_ray(camera_, position);
 	const PickHit surface_hit = pick_face_target(objects, ray, SelectionKind::Face);
-	const ObjectId source_object =
-			selection_mode_ == SelectionMode::Mesh ? ObjectId{} : component_source_object(objects, std::nullopt);
+	const std::vector<ComponentSourceObjectState> source_states = component_source_states(objects);
+	const ObjectId hover_candidate = component_hover_candidate(selection_mode_, component_source_candidate_,
+			surface_hit.hit ? surface_hit.target.object : ObjectId{});
+	const std::vector<ObjectId> source_objects =
+			selection_mode_ == SelectionMode::Mesh
+					? std::vector<ObjectId>{}
+					: component_source_wire_objects(source_states, selection_mode_, hover_candidate);
 	PickHit hit;
 	if (selection_mode_ == SelectionMode::Mesh) {
 		hit = pick_face_target(objects, ray, SelectionKind::Object);
 	} else if (selection_mode_ == SelectionMode::Vertex) {
-		hit = pick_vertex_target(objects, ray, visual_settings_.pick_vertex_radius, source_object);
+		hit = pick_vertex_target(objects, ray, visual_settings_.pick_vertex_radius, source_objects,
+				edit == SelectionEdit::Remove);
 	} else if (selection_mode_ == SelectionMode::Edge) {
-		hit = pick_edge_target(objects, ray, visual_settings_.pick_edge_radius, source_object);
+		hit = pick_edge_target(objects, ray, visual_settings_.pick_edge_radius, source_objects,
+				edit == SelectionEdit::Remove);
 	} else {
 		hit = surface_hit;
+	}
+	if (selection_mode_ != SelectionMode::Mesh && hover_candidate != component_source_candidate_) {
+		component_source_candidate_ = hover_candidate;
 	}
 
 	if (!hit.hit) {
 		if ((selection_mode_ == SelectionMode::Vertex || selection_mode_ == SelectionMode::Edge) && surface_hit.hit &&
 				edit == SelectionEdit::Replace) {
 			static_cast<void>(modeling_.activate_component_source(surface_hit.target.object));
+			component_source_candidate_ = surface_hit.target.object;
 			clear_hover();
 			invalidate_overlays();
 			return true;
@@ -1537,6 +1744,9 @@ bool QuaderViewportControl::select_at(godot::Vector2 position, SelectionEdit edi
 	}
 
 	static_cast<void>(modeling_.apply_selection(hit.target, edit));
+	if (hit.target.object.valid()) {
+		component_source_candidate_ = hit.target.object;
+	}
 	invalidate_overlays();
 	return true;
 }
@@ -1549,6 +1759,126 @@ void QuaderViewportControl::set_transform_tool(render::TransformGizmoTool tool) 
 	gizmo_hover_axis_ = render::TransformGizmoAxis::None;
 	gizmo_active_axis_ = render::TransformGizmoAxis::None;
 	transform_drag_active_ = false;
+	invalidate_overlays();
+}
+
+void QuaderViewportControl::activate_box_tool() {
+	box_tool_active_ = true;
+	box_drag_active_ = false;
+	box_preview_visible_ = false;
+	box_plane_ = make_box_construction_plane({0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+	box_preview_ = {};
+	clear_hover();
+	set_transform_tool(render::TransformGizmoTool::None);
+	selection_mode_ = SelectionMode::Mesh;
+	grab_focus();
+	invalidate_overlays();
+}
+
+void QuaderViewportControl::cancel_box_tool() {
+	if (!box_tool_active_ && !box_drag_active_ && !box_preview_visible_) {
+		return;
+	}
+	box_tool_active_ = false;
+	box_drag_active_ = false;
+	box_preview_visible_ = false;
+	box_preview_ = {};
+	invalidate_overlays();
+}
+
+std::optional<godot::Vector3> QuaderViewportControl::box_construction_point(godot::Vector2 position, bool seed_plane) {
+	if (camera_ == nullptr) {
+		return std::nullopt;
+	}
+	const Ray ray = make_ray(camera_, position);
+	if (seed_plane) {
+		const std::vector<modeling::MeshObjectSnapshot> objects = modeling_.overlay_objects();
+		const PickHit hit = pick_face_target(objects, ray, SelectionKind::Face);
+		box_plane_ = hit.hit && hit.normal.length_squared() > kToolEpsilon * kToolEpsilon
+				? make_box_construction_plane(hit.position, hit.normal)
+				: make_box_construction_plane({0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+	}
+	godot::Vector3 point;
+	if (!intersect_ray_plane(ray, box_plane_, point)) {
+		return std::nullopt;
+	}
+	return point;
+}
+
+bool QuaderViewportControl::update_box_preview(godot::Vector3 raw_start, godot::Vector3 raw_end) {
+	box_raw_start_ = raw_start;
+	box_raw_end_ = raw_end;
+	box_preview_ = make_box_tool_footprint(box_plane_, box_raw_start_, box_raw_end_, visual_settings_.grid_world_size);
+	box_preview_visible_ = box_preview_.valid;
+	invalidate_overlays();
+	return box_preview_visible_;
+}
+
+bool QuaderViewportControl::begin_box_drag(godot::Vector2 position) {
+	const std::optional<godot::Vector3> point = box_construction_point(position, true);
+	if (!point.has_value()) {
+		box_drag_active_ = false;
+		box_preview_visible_ = false;
+		invalidate_overlays();
+		return false;
+	}
+	box_drag_active_ = true;
+	clear_hover();
+	return update_box_preview(*point, *point);
+}
+
+void QuaderViewportControl::update_box_drag(godot::Vector2 position) {
+	if (!box_drag_active_) {
+		return;
+	}
+	const std::optional<godot::Vector3> point = box_construction_point(position, false);
+	if (!point.has_value()) {
+		return;
+	}
+	static_cast<void>(update_box_preview(box_raw_start_, *point));
+}
+
+void QuaderViewportControl::update_box_hover(godot::Vector2 position) {
+	if (!box_tool_active_ || box_drag_active_) {
+		return;
+	}
+	const std::optional<godot::Vector3> point = box_construction_point(position, true);
+	if (!point.has_value()) {
+		if (box_preview_visible_) {
+			box_preview_visible_ = false;
+			invalidate_overlays();
+		}
+		return;
+	}
+	clear_hover();
+	static_cast<void>(update_box_preview(*point, *point));
+}
+
+void QuaderViewportControl::commit_box_drag(godot::Vector2 position) {
+	if (!box_drag_active_) {
+		return;
+	}
+	update_box_drag(position);
+	box_drag_active_ = false;
+	if (!box_preview_.valid) {
+		box_preview_visible_ = false;
+		invalidate_overlays();
+		return;
+	}
+
+	std::array<quader::modeling::Vec3, 8> corners{};
+	for (std::size_t index = 0; index < corners.size(); ++index) {
+		corners[index] = to_modeling(box_preview_.corners[index]);
+	}
+	const quader::modeling::OperationReceipt receipt =
+			modeling_.create_box_from_corners(corners, "Box");
+	box_tool_active_ = false;
+	box_preview_visible_ = false;
+	box_preview_ = {};
+	if (receipt.success && receipt.changed) {
+		refresh_scene_meshes();
+	}
+	clear_hover();
 	invalidate_overlays();
 }
 
@@ -1814,7 +2144,11 @@ void QuaderViewportControl::set_grid_preset(int preset) {
 	visual_settings_.grid_world_size = grid_world_size_for_preset(grid_preset_);
 	render::apply_ground_grid_settings(grid_material_, visual_settings_);
 	render::apply_default_quader_material_settings(mesh_material_, visual_settings_);
+	if (box_preview_visible_) {
+		box_preview_ = make_box_tool_footprint(box_plane_, box_raw_start_, box_raw_end_, visual_settings_.grid_world_size);
+	}
 	request_viewport_redraw();
+	invalidate_overlays();
 	if (changed && grid_preset_changed_callback_) {
 		grid_preset_changed_callback_(grid_preset_);
 	}

@@ -7,6 +7,7 @@ endif()
 
 set(LIBNAME "quader_godot") # "The name of the library"
 set(GODOT_PROJECT_DIR "project" CACHE STRING "The directory of a Godot project folder")
+option(QUADER_GODOT_BUILD_TESTS "Build Quader Godot unit tests" OFF)
 
 # Make sure all the dependencies are satisfied
 find_package(Python3 3.4 REQUIRED)
@@ -105,3 +106,34 @@ set(GODOT_PROJECT_BINARY_DIR "${PROJECT_SOURCE_DIR}/${GODOT_PROJECT_DIR}/bin/${G
 add_custom_command(TARGET ${LIBNAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:${LIBNAME}>" "${GODOT_PROJECT_BINARY_DIR}/$<TARGET_FILE_NAME:${LIBNAME}>"
 )
+
+if(QUADER_GODOT_BUILD_TESTS)
+    include(CTest)
+    include(FetchContent)
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        googletest
+        URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(googletest)
+
+    add_executable(quader_godot_tests
+        tests/viewport_component_source_policy_tests.cpp
+        src/viewport/quader_component_source_policy.cpp
+    )
+    target_include_directories(quader_godot_tests
+        PRIVATE
+        "${PROJECT_SOURCE_DIR}/src"
+        "${PROJECT_SOURCE_DIR}/src/quader_modeling_sdk/include"
+    )
+    target_link_libraries(quader_godot_tests PRIVATE GTest::gtest_main)
+    set_property(TARGET quader_godot_tests PROPERTY CXX_STANDARD 20)
+    set_property(TARGET quader_godot_tests PROPERTY CXX_STANDARD_REQUIRED ON)
+    if(MSVC)
+        target_compile_definitions(quader_godot_tests PRIVATE NOMINMAX)
+    endif()
+
+    include(GoogleTest)
+    gtest_discover_tests(quader_godot_tests)
+endif()

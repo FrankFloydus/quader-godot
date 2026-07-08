@@ -80,6 +80,9 @@ public:
 
   [[nodiscard]] static Result<PolygonDocument> make_box(const BoxSpec &spec);
   [[nodiscard]] static Result<PolygonDocument>
+  make_box_from_corners(std::span<const Vec3> corners,
+                        MaterialId material = {});
+  [[nodiscard]] static Result<PolygonDocument>
   make_face(std::span<const Vec3> points, MaterialId material = {});
 
   [[nodiscard]] std::size_t vertex_count() const;

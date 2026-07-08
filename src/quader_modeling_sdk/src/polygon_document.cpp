@@ -318,6 +318,11 @@ native_knife_segment(KnifeStrokeSegment segment) {
   return x * x + y * y + z * z;
 }
 
+[[nodiscard]] bool finite_vec3(Vec3 value) {
+  return std::isfinite(value.x) && std::isfinite(value.y) &&
+         std::isfinite(value.z);
+}
+
 template <typename Operation>
 [[nodiscard]] Result<OperationResult>
 apply_operation(PolygonDocumentImpl &impl, Operation operation,
@@ -376,6 +381,55 @@ Result<PolygonDocument> PolygonDocument::make_box(const BoxSpec &spec) {
                native_material_slot(spec.material));
   return Result<PolygonDocument>::success(
       PolygonDocumentNativeAccess::from_native(builder.take()));
+}
+
+Result<PolygonDocument>
+PolygonDocument::make_box_from_corners(std::span<const Vec3> corners,
+                                       MaterialId material) {
+  if (corners.size() != 8U) {
+    return Result<PolygonDocument>::failure(make_error(
+        ErrorCode::InvalidArgument, "Box needs eight corner points."));
+  }
+
+  std::vector<quader::QVec3> native_corners;
+  native_corners.reserve(corners.size());
+  for (Vec3 corner : corners) {
+    if (!finite_vec3(corner)) {
+      return Result<PolygonDocument>::failure(make_error(
+          ErrorCode::InvalidArgument, "Box corners must be finite."));
+    }
+    native_corners.push_back(to_native(corner));
+  }
+
+  constexpr float kCreateBoxEpsilon = 0.000001F;
+  for (std::size_t left = 0; left < native_corners.size(); ++left) {
+    for (std::size_t right = left + 1U; right < native_corners.size();
+         ++right) {
+      if (distance_squared(native_corners[left], native_corners[right]) <=
+          kCreateBoxEpsilon * kCreateBoxEpsilon) {
+        return Result<PolygonDocument>::failure(make_error(
+            ErrorCode::InvalidArgument, "Box needs width, height, and depth."));
+      }
+    }
+  }
+
+  quader_poly::DocumentBuilder builder;
+  builder.box_from_corners(native_corners, native_material_slot(material));
+  PolygonDocument document = PolygonDocumentNativeAccess::from_native(builder.take());
+  if (document.vertex_count() != 8U || document.face_count() != 6U) {
+    return Result<PolygonDocument>::failure(make_error(
+        ErrorCode::ValidationFailed, "Box needs a valid closed volume."));
+  }
+
+  Result<OperationResult> validation = document.validate();
+  if (!validation.ok()) {
+    return Result<PolygonDocument>::failure(validation.error());
+  }
+  if (!validation.value().success) {
+    return Result<PolygonDocument>::failure(make_error(
+        ErrorCode::ValidationFailed, "Box validation failed."));
+  }
+  return Result<PolygonDocument>::success(std::move(document));
 }
 
 Result<PolygonDocument> PolygonDocument::make_face(std::span<const Vec3> points,
