@@ -96,7 +96,6 @@ SelectionSummary QuaderModelingAdapter::selection_summary() {
 
 OperationReceipt QuaderModelingAdapter::clear_selection() {
 	clear_mesh_selection_tracking();
-	active_object_ = {};
 	return api_.selection().clear();
 }
 
@@ -189,16 +188,6 @@ OperationReceipt QuaderModelingAdapter::apply_selection(const SelectionTarget &t
 		const OperationReceipt receipt = api_.meshes().only(objects).apply(edit);
 		if (receipt.success) {
 			apply_mesh_selection_tracking(objects, edit);
-			if (!objects.empty() && edit == SelectionEdit::Toggle) {
-				active_object_ = mesh_selection_tracked(target.object) ? target.object : ObjectId{};
-				if (!active_object_.valid()) {
-					set_active_from_mesh_selection();
-				}
-			} else if (!objects.empty() && edit != SelectionEdit::Remove) {
-				active_object_ = objects.front();
-			} else if (edit == SelectionEdit::Remove && active_object_ == target.object) {
-				set_active_from_mesh_selection();
-			}
 		}
 		return receipt;
 	}
@@ -211,7 +200,7 @@ OperationReceipt QuaderModelingAdapter::apply_selection(const SelectionTarget &t
 		static_cast<void>(clear_selection());
 		std::vector<ObjectId> objects{target.object};
 		static_cast<void>(api_.meshes().only(objects).add());
-		clear_mesh_selection_tracking();
+		mesh_selection_.clear();
 		active_object_ = target.object;
 	} else if (edit == SelectionEdit::Add) {
 		std::vector<ObjectId> objects{target.object};
@@ -314,41 +303,60 @@ OperationReceipt QuaderModelingAdapter::transform_selected_meshes(
 	return merged;
 }
 
-void QuaderModelingAdapter::apply_mesh_selection_tracking(std::span<const ObjectId> objects,
-		SelectionEdit edit) {
+void QuaderModelingAdapter::apply_mesh_selection_tracking(
+		std::span<const ObjectId> objects, SelectionEdit edit) {
 	if (edit == SelectionEdit::Replace) {
 		mesh_selection_.assign(objects.begin(), objects.end());
+		active_object_ = mesh_selection_.empty() ? ObjectId{} : mesh_selection_.front();
 		return;
 	}
 
-	for (const ObjectId object : objects) {
-		const auto found = std::find(mesh_selection_.begin(), mesh_selection_.end(), object);
-		if (edit == SelectionEdit::Add) {
-			if (found == mesh_selection_.end()) {
+	if (edit == SelectionEdit::Add) {
+		for (ObjectId object : objects) {
+			if (!mesh_selection_tracked(object)) {
 				mesh_selection_.push_back(object);
 			}
-			continue;
 		}
-		if (edit == SelectionEdit::Remove) {
-			if (found != mesh_selection_.end()) {
-				mesh_selection_.erase(found);
+		if (!objects.empty()) {
+			active_object_ = objects.front();
+		}
+		return;
+	}
+
+	if (edit == SelectionEdit::Remove) {
+		for (ObjectId object : objects) {
+			mesh_selection_.erase(std::remove(mesh_selection_.begin(), mesh_selection_.end(), object),
+					mesh_selection_.end());
+			if (active_object_ == object) {
+				set_active_from_mesh_selection();
 			}
-			continue;
 		}
-		if (found == mesh_selection_.end()) {
-			mesh_selection_.push_back(object);
-		} else {
-			mesh_selection_.erase(found);
+		return;
+	}
+
+	if (edit == SelectionEdit::Toggle) {
+		for (ObjectId object : objects) {
+			if (mesh_selection_tracked(object)) {
+				mesh_selection_.erase(std::remove(mesh_selection_.begin(), mesh_selection_.end(), object),
+						mesh_selection_.end());
+				if (active_object_ == object) {
+					set_active_from_mesh_selection();
+				}
+			} else {
+				mesh_selection_.push_back(object);
+				active_object_ = object;
+			}
 		}
 	}
 }
 
 void QuaderModelingAdapter::clear_mesh_selection_tracking() {
 	mesh_selection_.clear();
+	active_object_ = {};
 }
 
 void QuaderModelingAdapter::set_active_from_mesh_selection() {
-	active_object_ = mesh_selection_.empty() ? ObjectId{} : mesh_selection_.back();
+	active_object_ = mesh_selection_.empty() ? ObjectId{} : mesh_selection_.front();
 }
 
 bool QuaderModelingAdapter::mesh_selection_tracked(ObjectId object) const {

@@ -1,15 +1,15 @@
 #include "ui/components/organism/quader_top_bar.h"
 
-#include "ui/components/atoms/surface.h"
-#include "ui/panel_builder.h"
-#include "ui/ui_tokens.h"
-
 #include <godot_cpp/classes/control.hpp>
+#include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/h_box_container.hpp>
 #include <godot_cpp/classes/menu_button.hpp>
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/classes/panel_container.hpp>
 #include <godot_cpp/classes/popup_menu.hpp>
+#include <godot_cpp/classes/ref.hpp>
+#include <godot_cpp/classes/style_box_empty.hpp>
+#include <godot_cpp/classes/style_box_flat.hpp>
 #include <godot_cpp/core/memory.hpp>
 #include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/color.hpp>
@@ -26,7 +26,14 @@ using godot::MenuButton;
 using godot::Object;
 using godot::PanelContainer;
 using godot::PopupMenu;
+using godot::Ref;
+using godot::SIDE_BOTTOM;
+using godot::SIDE_LEFT;
+using godot::SIDE_RIGHT;
+using godot::SIDE_TOP;
 using godot::String;
+using godot::StyleBoxEmpty;
+using godot::StyleBoxFlat;
 
 constexpr float kTopBarHeight = 24.0f;
 constexpr char kTopBarSurfaceColor[] = "#191919";
@@ -35,48 +42,6 @@ constexpr char kMenuHoverSurfaceColor[] = "#2e2e2e";
 constexpr char kMenuPressedSurfaceColor[] = "#3c3c3c";
 constexpr char kMenuTextColor[] = "#d8d8d8";
 
-void apply_edit_menu_style(MenuButton *edit_menu) {
-	PanelBuilder panel_builder{edit_menu};
-	edit_menu->add_theme_font_size_override(FontSizeOverride::FontSize, 14);
-	edit_menu->add_theme_color_override(ColorOverride::FontColor, Color(String(kMenuTextColor)));
-	edit_menu->add_theme_color_override(ColorOverride::FontHoverColor, Color(String(kMenuTextColor)));
-	edit_menu->add_theme_color_override(ColorOverride::FontPressedColor, Color(String(kMenuTextColor)));
-	panel_builder.override(StyleOverride::Normal)
-			->make_flat()
-			->set_background(kTopBarSurfaceColor)
-			->set_margins(6.0f, 2.0f)
-			->apply();
-	panel_builder.override(StyleOverride::Hover)
-			->make_flat()
-			->set_background(kMenuHoverSurfaceColor)
-			->set_margins(6.0f, 2.0f)
-			->apply();
-	panel_builder.override(StyleOverride::Pressed)
-			->make_flat()
-			->set_background(kMenuPressedSurfaceColor)
-			->set_margins(6.0f, 2.0f)
-			->apply();
-	panel_builder.override(StyleOverride::Focus)
-			->make_empty()
-			->apply();
-}
-
-void configure_edit_menu_popup(PopupMenu *popup, Object *target) {
-	if (popup == nullptr) {
-		return;
-	}
-	PanelBuilder panel_builder{popup};
-	popup->add_theme_font_size_override(FontSizeOverride::FontSize, 14);
-	popup->add_theme_color_override(ColorOverride::FontColor, Color(String(kMenuTextColor)));
-	panel_builder.override(StyleOverride::Panel)
-			->make_flat()
-			->set_background(kPopupSurfaceColor)
-			->set_margins(4.0f)
-			->apply();
-	popup->add_item("Settings", kEditMenuSettingsId);
-	popup->connect(SignalName::IdPressed, Callable(target, "on_edit_menu_id"));
-}
-
 } // namespace
 
 QuaderTopBar::QuaderTopBar(Object *target) :
@@ -84,25 +49,80 @@ QuaderTopBar::QuaderTopBar(Object *target) :
 }
 
 Control *QuaderTopBar::render() const {
-	PanelContainer *top_bar_panel = Surface{kTopBarSurfaceColor}.render();
-	top_bar_panel->set_name(UiNodeName::QuaderTopBar);
+	PanelContainer *top_bar_panel = memnew(PanelContainer);
+	top_bar_panel->set_name("QuaderTopBar");
 	top_bar_panel->set_custom_minimum_size({0.0f, kTopBarHeight});
 	top_bar_panel->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 
-	auto *top_bar = memnew(HBoxContainer);
+	Ref<StyleBoxFlat> panel_style;
+	panel_style.instantiate();
+	panel_style->set_bg_color(Color(String(kTopBarSurfaceColor)));
+	top_bar_panel->add_theme_stylebox_override("panel", panel_style);
+
+	HBoxContainer *top_bar = memnew(HBoxContainer);
 	top_bar->set_custom_minimum_size({0.0f, kTopBarHeight});
-	top_bar->add_theme_constant_override(ConstantOverride::Separation, 0);
+	top_bar->add_theme_constant_override("separation", 0);
 	top_bar_panel->add_child(top_bar);
 
-	auto *edit_menu = memnew(MenuButton);
-	edit_menu->set_name(UiNodeName::QuaderEditMenu);
+	MenuButton *edit_menu = memnew(MenuButton);
+	edit_menu->set_name("QuaderEditMenu");
 	edit_menu->set_text("Edit");
 	edit_menu->set_flat(true);
 	edit_menu->set_custom_minimum_size({42.0f, kTopBarHeight});
-	apply_edit_menu_style(edit_menu);
+	edit_menu->add_theme_font_size_override("font_size", 14);
+	edit_menu->add_theme_color_override("font_color", Color(String(kMenuTextColor)));
+	edit_menu->add_theme_color_override("font_hover_color", Color(String(kMenuTextColor)));
+	edit_menu->add_theme_color_override("font_pressed_color", Color(String(kMenuTextColor)));
+
+	Ref<StyleBoxFlat> menu_normal_style;
+	menu_normal_style.instantiate();
+	menu_normal_style->set_bg_color(Color(String(kTopBarSurfaceColor)));
+	menu_normal_style->set_content_margin(SIDE_LEFT, 6.0f);
+	menu_normal_style->set_content_margin(SIDE_TOP, 2.0f);
+	menu_normal_style->set_content_margin(SIDE_RIGHT, 6.0f);
+	menu_normal_style->set_content_margin(SIDE_BOTTOM, 2.0f);
+	edit_menu->add_theme_stylebox_override("normal", menu_normal_style);
+
+	Ref<StyleBoxFlat> menu_hover_style;
+	menu_hover_style.instantiate();
+	menu_hover_style->set_bg_color(Color(String(kMenuHoverSurfaceColor)));
+	menu_hover_style->set_content_margin(SIDE_LEFT, 6.0f);
+	menu_hover_style->set_content_margin(SIDE_TOP, 2.0f);
+	menu_hover_style->set_content_margin(SIDE_RIGHT, 6.0f);
+	menu_hover_style->set_content_margin(SIDE_BOTTOM, 2.0f);
+	edit_menu->add_theme_stylebox_override("hover", menu_hover_style);
+
+	Ref<StyleBoxFlat> menu_pressed_style;
+	menu_pressed_style.instantiate();
+	menu_pressed_style->set_bg_color(Color(String(kMenuPressedSurfaceColor)));
+	menu_pressed_style->set_content_margin(SIDE_LEFT, 6.0f);
+	menu_pressed_style->set_content_margin(SIDE_TOP, 2.0f);
+	menu_pressed_style->set_content_margin(SIDE_RIGHT, 6.0f);
+	menu_pressed_style->set_content_margin(SIDE_BOTTOM, 2.0f);
+	edit_menu->add_theme_stylebox_override("pressed", menu_pressed_style);
+
+	Ref<StyleBoxEmpty> menu_focus_style;
+	menu_focus_style.instantiate();
+	edit_menu->add_theme_stylebox_override("focus", menu_focus_style);
 	top_bar->add_child(edit_menu);
 
-	configure_edit_menu_popup(edit_menu->get_popup(), target_);
+	PopupMenu *popup = edit_menu->get_popup();
+	if (popup != nullptr) {
+		popup->add_theme_font_size_override("font_size", 14);
+		popup->add_theme_color_override("font_color", Color(String(kMenuTextColor)));
+
+		Ref<StyleBoxFlat> popup_style;
+		popup_style.instantiate();
+		popup_style->set_bg_color(Color(String(kPopupSurfaceColor)));
+		popup_style->set_content_margin(SIDE_LEFT, 4.0f);
+		popup_style->set_content_margin(SIDE_TOP, 4.0f);
+		popup_style->set_content_margin(SIDE_RIGHT, 4.0f);
+		popup_style->set_content_margin(SIDE_BOTTOM, 4.0f);
+		popup->add_theme_stylebox_override("panel", popup_style);
+
+		popup->add_item("Settings", kEditMenuSettingsId);
+		popup->connect("id_pressed", Callable(target_, "on_edit_menu_id"));
+	}
 
 	return top_bar_panel;
 }

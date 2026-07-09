@@ -1,13 +1,13 @@
 #pragma once
 
-#include "viewport/quader_viewport_selection_mode.h"
+#include "selection/selection_mode.h"
 
 #include <quader/modeling/modeling.hpp>
 
 #include <span>
 #include <vector>
 
-namespace quader_godot::viewport {
+namespace quader::editor::selection {
 
 using quader::modeling::ObjectId;
 
@@ -44,4 +44,4 @@ struct ComponentSourceObjectState {
 		std::span<const ComponentSourceObjectState> objects, SelectionMode mode,
 		ObjectId candidate);
 
-} // namespace quader_godot::viewport
+} // namespace quader::editor::selection

@@ -5,7 +5,6 @@
 #include "ui/quader_editor_layout.h"
 #include "ui/components/organism/quader_top_bar.h"
 #include "ui/quader_viewport_settings_window.h"
-#include "ui/ui_tokens.h"
 #include "viewport/quader_viewport_control.h"
 
 #include <godot_cpp/classes/control.hpp>
@@ -32,8 +31,6 @@ using ui::kEditMenuSettingsId;
 using ui::make_quader_editor_body;
 using ui::make_quader_viewport_settings_window;
 using viewport::QuaderViewportControl;
-
-namespace ConstantOverride = ui::ConstantOverride;
 
 } // namespace
 
@@ -160,9 +157,9 @@ void QuaderEditorWindow::build_content() {
 	set_min_size({640, 360});
 	set_wrap_controls(true);
 
-	auto *root = memnew(VBoxContainer);
+	VBoxContainer *root = memnew(VBoxContainer);
 	root->set_anchors_preset(Control::PRESET_FULL_RECT);
-	root->add_theme_constant_override(ConstantOverride::Separation, 0);
+	root->add_theme_constant_override("separation", 0);
 	add_child(root);
 	QuaderTopBar top_bar{this};
 	root->add_child(top_bar.render());

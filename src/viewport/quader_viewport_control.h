@@ -1,18 +1,22 @@
 #pragma once
 
+#include "gizmo/gizmo_drag_session.h"
+#include "gizmo/gizmo.h"
 #include "modeling/quader_modeling_adapter.h"
-#include "render/quader_godot_render_utils.h"
-#include "render/quader_godot_transform_gizmo.h"
-#include "viewport/quader_camera_controller.h"
+#include "viewport/godot_editor_camera_bridge.h"
 #include "viewport/quader_viewport_selection_mode.h"
 #include "viewport/quader_viewport_visual_settings.h"
 
 #include <godot_cpp/classes/control.hpp>
+#include <godot_cpp/classes/environment.hpp>
 #include <godot_cpp/classes/input_event.hpp>
 #include <godot_cpp/classes/ref.hpp>
+#include <godot_cpp/classes/shader_material.hpp>
+#include <godot_cpp/variant/vector3.hpp>
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <vector>
@@ -32,12 +36,6 @@ namespace quader_godot::viewport {
 
 using quader::modeling::ObjectId;
 using quader::modeling::SelectionEdit;
-
-struct TransformDragBounds {
-	bool has_bounds = false;
-	godot::Vector3 min;
-	godot::Vector3 max;
-};
 
 struct BoxConstructionPlane {
 	godot::Vector3 origin;
@@ -90,12 +88,13 @@ private:
 	void clear_hover();
 	void update_hover(godot::Vector2 position, bool remove_preview);
 	bool select_at(godot::Vector2 position, SelectionEdit edit);
-	void set_transform_tool(render::TransformGizmoTool tool);
-	[[nodiscard]] render::TransformGizmoInput transform_gizmo_input(
+	void set_active_gizmo(const gizmo::Gizmo *gizmo);
+	[[nodiscard]] gizmo::GizmoMutationResult apply_gizmo_mutation(const gizmo::GizmoMutation &mutation);
+	[[nodiscard]] gizmo::GizmoInput transform_gizmo_input(
 			std::span<const modeling::MeshObjectSnapshot> objects) const;
 	[[nodiscard]] std::optional<godot::Vector3> selected_mesh_pivot(
 			std::span<const modeling::MeshObjectSnapshot> objects) const;
-	[[nodiscard]] TransformDragBounds selected_mesh_bounds(
+	[[nodiscard]] gizmo::GizmoSelectionBounds selected_mesh_bounds(
 			std::span<const modeling::MeshObjectSnapshot> objects) const;
 	bool begin_transform_drag(godot::Vector2 position);
 	void update_transform_drag(godot::Vector2 position);
@@ -109,20 +108,13 @@ private:
 	void commit_box_drag(godot::Vector2 position);
 	[[nodiscard]] std::optional<godot::Vector3> box_construction_point(godot::Vector2 position, bool seed_plane);
 	[[nodiscard]] bool update_box_preview(godot::Vector3 raw_start, godot::Vector3 raw_end);
-	void handle_keyboard(double delta);
-	void begin_fly();
-	void end_fly();
 
 	bool built_ = false;
 	int grid_preset_ = 6;
 	SelectionMode selection_mode_ = SelectionMode::Mesh;
-	bool orbiting_ = false;
-	bool panning_ = false;
-	bool fly_active_ = false;
 	bool has_hover_ = false;
 	bool hover_remove_preview_ = false;
 	bool overlays_dirty_ = true;
-	bool transform_drag_active_ = false;
 	bool box_tool_active_ = false;
 	bool box_drag_active_ = false;
 	bool box_preview_visible_ = false;
@@ -132,19 +124,9 @@ private:
 	godot::Vector3 box_raw_end_;
 	BoxConstructionPlane box_plane_;
 	BoxToolFootprint box_preview_;
-	render::TransformGizmoTool transform_tool_ = render::TransformGizmoTool::None;
-	render::TransformGizmoAxis gizmo_hover_axis_ = render::TransformGizmoAxis::None;
-	render::TransformGizmoAxis gizmo_active_axis_ = render::TransformGizmoAxis::None;
-	godot::Vector2 transform_drag_last_position_;
-	godot::Vector3 transform_drag_start_pivot_;
-	godot::Vector3 transform_drag_pivot_;
-	godot::Vector3 transform_drag_unsnapped_move_;
-	godot::Vector3 transform_drag_applied_move_;
-	TransformDragBounds transform_drag_bounds_;
-	float transform_drag_unsnapped_angle_ = 0.0f;
-	float transform_drag_applied_angle_ = 0.0f;
-	float transform_drag_unsnapped_scale_amount_ = 0.0f;
-	float transform_drag_applied_scale_factor_ = 1.0f;
+	const gizmo::Gizmo *active_gizmo_ = nullptr;
+	gizmo::GizmoHandle hovered_gizmo_handle_ = gizmo::GizmoHandle::None;
+	std::unique_ptr<gizmo::GizmoDragSession> active_gizmo_drag_;
 	ViewportVisualSettings visual_settings_ = default_viewport_visual_settings();
 	godot::Ref<godot::Environment> environment_;
 	godot::Ref<godot::ShaderMaterial> grid_material_;
@@ -154,7 +136,6 @@ private:
 	godot::WorldEnvironment *world_environment_ = nullptr;
 	godot::Node3D *scene_root_ = nullptr;
 	godot::Node3D *overlay_root_ = nullptr;
-	godot::Camera3D *camera_ = nullptr;
 	godot::MeshInstance3D *selection_face_overlay_ = nullptr;
 	godot::MeshInstance3D *hover_face_overlay_ = nullptr;
 	godot::MeshInstance3D *source_wire_overlay_ = nullptr;
@@ -168,7 +149,7 @@ private:
 	godot::MeshInstance3D *box_preview_wire_overlay_ = nullptr;
 	godot::MeshInstance3D *transform_gizmo_line_overlay_ = nullptr;
 	godot::MeshInstance3D *transform_gizmo_triangle_overlay_ = nullptr;
-	QuaderCameraController camera_controller_;
+	GodotEditorCameraBridge camera_bridge_;
 	modeling::QuaderModelingAdapter modeling_;
 	std::vector<SceneMeshNode> scene_meshes_;
 	std::function<void(int)> grid_preset_changed_callback_;

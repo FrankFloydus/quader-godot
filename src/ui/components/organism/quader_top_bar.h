@@ -1,7 +1,5 @@
 #pragma once
 
-#include "ui/components/atoms/base_ui_component.h"
-
 #include <cstdint>
 
 namespace godot {
@@ -16,11 +14,11 @@ inline constexpr int32_t kEditMenuSettingsId = 1;
 using godot::Control;
 using godot::Object;
 
-class QuaderTopBar final : public BaseUIComponent {
+class QuaderTopBar final {
 public:
 	explicit QuaderTopBar(Object *target);
 
-	[[nodiscard]] Control *render() const override;
+	[[nodiscard]] Control *render() const;
 
 private:
 	Object *target_ = nullptr;

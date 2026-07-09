@@ -119,8 +119,10 @@ if(QUADER_GODOT_BUILD_TESTS)
     FetchContent_MakeAvailable(googletest)
 
     add_executable(quader_godot_tests
+        tests/editor_camera_tests.cpp
         tests/viewport_component_source_policy_tests.cpp
-        src/viewport/quader_component_source_policy.cpp
+        src/camera/editor_camera.cpp
+        src/selection/component_source_policy.cpp
     )
     target_include_directories(quader_godot_tests
         PRIVATE

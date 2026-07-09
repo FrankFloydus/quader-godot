@@ -1,9 +1,9 @@
 #include "viewport/quader_viewport_control.h"
 
+#include "gizmo/gizmo_registry.h"
 #include "render/quader_godot_render_utils.h"
 #include "render/quader_godot_selection_overlay.h"
-#include "render/quader_godot_transform_gizmo.h"
-#include "viewport/quader_component_source_policy.h"
+#include "selection/component_source_policy.h"
 
 #include <godot_cpp/classes/array_mesh.hpp>
 #include <godot_cpp/classes/camera3d.hpp>
@@ -45,6 +45,11 @@ using quader::modeling::SelectionEdit;
 using quader::modeling::SelectionKind;
 using quader::modeling::Vec3;
 using quader::modeling::VertexId;
+using quader::modeling::make_edge_key;
+using quader::editor::selection::ComponentSourceObjectState;
+using quader::editor::selection::component_hover_candidate;
+using quader::editor::selection::component_vertex_handle_objects;
+using quader::editor::selection::component_source_wire_objects;
 
 struct Ray {
 	godot::Vector3 origin;
@@ -65,10 +70,7 @@ constexpr float kOverlayLineDepthBiasPixels = 1.0f;
 constexpr float kOverlayPointDepthBiasPixels = 1.5f;
 constexpr float kToolEpsilon = 0.000001f;
 constexpr float kScreenEpsilon = 0.0001f;
-constexpr float kScalePixelsPerFactor = 96.0f;
-constexpr float kMinScaleFactor = 0.01f;
 constexpr float kPi = 3.14159265358979323846f;
-constexpr float kRotateSnapRadians = kPi / 12.0f;
 constexpr float kBoxPreviewDashPixels = 8.0f;
 constexpr float kBoxPreviewDashGapPixels = 5.0f;
 constexpr float kBoxPreviewLineWidthPixels = 2.0f;
@@ -142,18 +144,15 @@ std::optional<SelectionMode> selection_mode_for_key(godot::Key key) {
 	}
 }
 
-std::optional<render::TransformGizmoTool> transform_tool_for_key(godot::Key key) {
+bool transform_gizmo_key(godot::Key key) {
 	switch (key) {
 	case godot::KEY_Q:
-		return render::TransformGizmoTool::None;
 	case godot::KEY_W:
-		return render::TransformGizmoTool::Move;
 	case godot::KEY_R:
-		return render::TransformGizmoTool::Rotate;
 	case godot::KEY_S:
-		return render::TransformGizmoTool::Scale;
+		return true;
 	default:
-		return std::nullopt;
+		return false;
 	}
 }
 
@@ -349,234 +348,8 @@ bool remove_modifier_key(godot::Key key) {
 	return key == godot::KEY_CTRL || key == godot::KEY_META;
 }
 
-godot::Vector3 transform_axis_vector(render::TransformGizmoAxis axis) {
-	if (axis == render::TransformGizmoAxis::X) {
-		return {1.0f, 0.0f, 0.0f};
-	}
-	if (axis == render::TransformGizmoAxis::Y) {
-		return {0.0f, 1.0f, 0.0f};
-	}
-	if (axis == render::TransformGizmoAxis::Z) {
-		return {0.0f, 0.0f, 1.0f};
-	}
-	return {};
-}
-
 Vec3 to_modeling(godot::Vector3 value) {
 	return {value.x, value.y, value.z};
-}
-
-Vec3 axis_radians(render::TransformGizmoAxis axis, float radians) {
-	if (axis == render::TransformGizmoAxis::X) {
-		return {radians, 0.0f, 0.0f};
-	}
-	if (axis == render::TransformGizmoAxis::Y) {
-		return {0.0f, radians, 0.0f};
-	}
-	if (axis == render::TransformGizmoAxis::Z) {
-		return {0.0f, 0.0f, radians};
-	}
-	return {};
-}
-
-Vec3 axis_scale(render::TransformGizmoAxis axis, float factor) {
-	Vec3 scale{1.0f, 1.0f, 1.0f};
-	if (axis == render::TransformGizmoAxis::X || axis == render::TransformGizmoAxis::XY ||
-			axis == render::TransformGizmoAxis::XZ) {
-		scale.x = factor;
-	}
-	if (axis == render::TransformGizmoAxis::Y || axis == render::TransformGizmoAxis::XY ||
-			axis == render::TransformGizmoAxis::YZ) {
-		scale.y = factor;
-	}
-	if (axis == render::TransformGizmoAxis::Z || axis == render::TransformGizmoAxis::XZ ||
-			axis == render::TransformGizmoAxis::YZ) {
-		scale.z = factor;
-	}
-	if (axis == render::TransformGizmoAxis::All) {
-		scale = {factor, factor, factor};
-	}
-	return scale;
-}
-
-bool transform_axis_is_plane(render::TransformGizmoAxis axis) {
-	return axis == render::TransformGizmoAxis::XY || axis == render::TransformGizmoAxis::XZ ||
-			axis == render::TransformGizmoAxis::YZ;
-}
-
-std::array<godot::Vector3, 2> transform_plane_axes(render::TransformGizmoAxis axis) {
-	if (axis == render::TransformGizmoAxis::XY) {
-		return {godot::Vector3{1.0f, 0.0f, 0.0f}, godot::Vector3{0.0f, 1.0f, 0.0f}};
-	}
-	if (axis == render::TransformGizmoAxis::XZ) {
-		return {godot::Vector3{1.0f, 0.0f, 0.0f}, godot::Vector3{0.0f, 0.0f, 1.0f}};
-	}
-	return {godot::Vector3{0.0f, 1.0f, 0.0f}, godot::Vector3{0.0f, 0.0f, 1.0f}};
-}
-
-float viewport_world_units_per_pixel_at(const godot::Camera3D *camera, godot::Vector2 viewport_size,
-		godot::Vector3 position) {
-	const float height = std::max(viewport_size.y, 1.0f);
-	if (camera->get_projection() == godot::Camera3D::PROJECTION_ORTHOGONAL) {
-		return static_cast<float>(camera->get_size()) / height;
-	}
-	const godot::Vector3 camera_forward = -camera->get_global_transform().basis.get_column(2).normalized();
-	const float view_depth = std::max((position - camera->get_global_transform().origin).dot(camera_forward), 0.001f);
-	const float fov_radians = static_cast<float>(camera->get_fov()) * 3.14159265358979323846f / 180.0f;
-	return 2.0f * view_depth * std::tan(fov_radians * 0.5f) / height;
-}
-
-float safe_grid_size(float grid_size) {
-	return std::isfinite(grid_size) && grid_size > kToolEpsilon ? grid_size : 1.0f;
-}
-
-float snap_world_value(float value, float grid_size) {
-	const float grid = safe_grid_size(grid_size);
-	return std::round(value / grid) * grid;
-}
-
-float snap_to_step(float value, float step) {
-	if (!std::isfinite(step) || step <= kToolEpsilon) {
-		return value;
-	}
-	return std::round(value / step) * step;
-}
-
-bool transform_axis_includes_component(render::TransformGizmoAxis axis, int component) {
-	if (axis == render::TransformGizmoAxis::All) {
-		return true;
-	}
-	if (component == 0) {
-		return axis == render::TransformGizmoAxis::X || axis == render::TransformGizmoAxis::XY ||
-				axis == render::TransformGizmoAxis::XZ;
-	}
-	if (component == 1) {
-		return axis == render::TransformGizmoAxis::Y || axis == render::TransformGizmoAxis::XY ||
-				axis == render::TransformGizmoAxis::YZ;
-	}
-	if (component == 2) {
-		return axis == render::TransformGizmoAxis::Z || axis == render::TransformGizmoAxis::XZ ||
-				axis == render::TransformGizmoAxis::YZ;
-	}
-	return false;
-}
-
-godot::Vector3 snap_center_drag_delta(render::TransformGizmoAxis axis, godot::Vector3 center,
-		godot::Vector3 raw_delta, float grid_size) {
-	godot::Vector3 delta;
-	if (transform_axis_includes_component(axis, 0)) {
-		delta.x = snap_world_value(center.x + raw_delta.x, grid_size) - center.x;
-	}
-	if (transform_axis_includes_component(axis, 1)) {
-		delta.y = snap_world_value(center.y + raw_delta.y, grid_size) - center.y;
-	}
-	if (transform_axis_includes_component(axis, 2)) {
-		delta.z = snap_world_value(center.z + raw_delta.z, grid_size) - center.z;
-	}
-	return delta;
-}
-
-float bounds_extent_component(godot::Vector3 min, godot::Vector3 max, int component) {
-	if (component == 0) {
-		return std::abs(max.x - min.x);
-	}
-	if (component == 1) {
-		return std::abs(max.y - min.y);
-	}
-	if (component == 2) {
-		return std::abs(max.z - min.z);
-	}
-	return 0.0f;
-}
-
-float base_scale_distance(render::TransformGizmoAxis axis, godot::Vector3 min, godot::Vector3 max,
-		godot::Vector3 pivot) {
-	const auto max_abs = [](float left, float right) { return std::max(std::abs(left), std::abs(right)); };
-	float distance = 0.0f;
-	if (transform_axis_includes_component(axis, 0)) {
-		distance = std::max(distance, max_abs(max.x - pivot.x, min.x - pivot.x));
-	}
-	if (transform_axis_includes_component(axis, 1)) {
-		distance = std::max(distance, max_abs(max.y - pivot.y, min.y - pivot.y));
-	}
-	if (transform_axis_includes_component(axis, 2)) {
-		distance = std::max(distance, max_abs(max.z - pivot.z, min.z - pivot.z));
-	}
-	return distance;
-}
-
-float minimum_scale_factor_for_grid(render::TransformGizmoAxis axis, godot::Vector3 min, godot::Vector3 max,
-		float grid_size, bool shrinking) {
-	float factor = kMinScaleFactor;
-	for (int component = 0; component < 3; ++component) {
-		if (!transform_axis_includes_component(axis, component)) {
-			continue;
-		}
-		const float extent = bounds_extent_component(min, max, component);
-		if (extent <= kScreenEpsilon) {
-			continue;
-		}
-		float axis_factor = grid_size / extent;
-		if (shrinking && axis_factor > 1.0f) {
-			axis_factor = 1.0f;
-		}
-		factor = std::max(factor, axis_factor);
-	}
-	return factor;
-}
-
-float snapped_scale_factor(render::TransformGizmoAxis axis, float factor, const TransformDragBounds &bounds,
-		godot::Vector3 pivot, bool grid_enabled, float grid_size) {
-	if (!bounds.has_bounds || !grid_enabled || grid_size <= kScreenEpsilon) {
-		return factor;
-	}
-	if (std::abs(factor - 1.0f) <= kToolEpsilon) {
-		return 1.0f;
-	}
-	const float base_distance_value = base_scale_distance(axis, bounds.min, bounds.max, pivot);
-	if (base_distance_value <= kScreenEpsilon) {
-		return factor;
-	}
-	const float base_extent = base_distance_value * 2.0f;
-	const float raw_extent = std::max(kToolEpsilon, base_extent * factor);
-	const float grid = safe_grid_size(grid_size);
-	const bool shrinking = factor < 1.0f;
-	const float snapped_units = shrinking ? std::floor(raw_extent / grid) : std::round(raw_extent / grid);
-	const float snapped_extent = snapped_units * grid;
-	const float snapped_factor = snapped_extent <= kScreenEpsilon ? kMinScaleFactor : snapped_extent / base_extent;
-	const float minimum_factor = minimum_scale_factor_for_grid(axis, bounds.min, bounds.max, grid, shrinking);
-	return std::max(minimum_factor, snapped_factor);
-}
-
-template <typename T>
-bool contains_id(std::span<const T> ids, T value) {
-	return std::find(ids.begin(), ids.end(), value) != ids.end();
-}
-
-bool target_selected(const modeling::MeshObjectSnapshot &object, const modeling::SelectionTarget &target) {
-	if (target.kind == SelectionKind::Object) {
-		return object.mesh_selected;
-	}
-	if (target.kind == SelectionKind::Vertex) {
-		return contains_id<VertexId>(object.selected_vertices, target.vertex);
-	}
-	if (target.kind == SelectionKind::Edge) {
-		return contains_id<EdgeKey>(object.selected_edges, target.edge);
-	}
-	if (target.kind == SelectionKind::Face) {
-		return contains_id<FaceId>(object.selected_faces, target.face);
-	}
-	return false;
-}
-
-bool component_selected(const modeling::MeshObjectSnapshot &object, SelectionKind kind, VertexId vertex, EdgeKey edge) {
-	if (kind == SelectionKind::Vertex) {
-		return contains_id<VertexId>(object.selected_vertices, vertex);
-	}
-	if (kind == SelectionKind::Edge) {
-		return contains_id<EdgeKey>(object.selected_edges, edge);
-	}
-	return false;
 }
 
 std::vector<ComponentSourceObjectState> component_source_states(
@@ -635,27 +408,6 @@ bool face_contains_edge(const AuthoredPolygonFacePayload &face, EdgeKey edge) {
 		}
 	}
 	return false;
-}
-
-bool point_inside_authored_bounds(const AuthoredPolygonPayload &payload, godot::Vector3 point, float padding) {
-	if (payload.positions.empty()) {
-		return false;
-	}
-
-	godot::Vector3 min = to_godot(payload.positions.front());
-	godot::Vector3 max = min;
-	for (Vec3 position : payload.positions) {
-		const godot::Vector3 value = to_godot(position);
-		min.x = std::min(min.x, value.x);
-		min.y = std::min(min.y, value.y);
-		min.z = std::min(min.z, value.z);
-		max.x = std::max(max.x, value.x);
-		max.y = std::max(max.y, value.y);
-		max.z = std::max(max.z, value.z);
-	}
-
-	return point.x >= min.x - padding && point.x <= max.x + padding && point.y >= min.y - padding &&
-			point.y <= max.y + padding && point.z >= min.z - padding && point.z <= max.z + padding;
 }
 
 std::optional<godot::Vector3> authored_center(const AuthoredPolygonPayload &payload) {
@@ -954,6 +706,37 @@ PickHit pick_face_target(const modeling::MeshObjectSnapshot &object, const Ray &
 	return best;
 }
 
+template <typename T>
+bool contains_id(std::span<const T> ids, T value) {
+	return std::find(ids.begin(), ids.end(), value) != ids.end();
+}
+
+bool target_selected(const modeling::MeshObjectSnapshot &object, const modeling::SelectionTarget &target) {
+	if (target.kind == SelectionKind::Object) {
+		return object.mesh_selected;
+	}
+	if (target.kind == SelectionKind::Vertex) {
+		return contains_id<VertexId>(object.selected_vertices, target.vertex);
+	}
+	if (target.kind == SelectionKind::Edge) {
+		return contains_id<EdgeKey>(object.selected_edges, target.edge);
+	}
+	if (target.kind == SelectionKind::Face) {
+		return contains_id<FaceId>(object.selected_faces, target.face);
+	}
+	return false;
+}
+
+bool component_selected(const modeling::MeshObjectSnapshot &object, SelectionKind kind, VertexId vertex, EdgeKey edge) {
+	if (kind == SelectionKind::Vertex) {
+		return contains_id<VertexId>(object.selected_vertices, vertex);
+	}
+	if (kind == SelectionKind::Edge) {
+		return contains_id<EdgeKey>(object.selected_edges, edge);
+	}
+	return false;
+}
+
 bool component_pick_occluded(float component_depth, const PickHit &surface_hit,
 		const modeling::MeshObjectSnapshot &object, SelectionKind kind, VertexId vertex = {}, EdgeKey edge = {}) {
 	if (component_selected(object, kind, vertex, edge)) {
@@ -1072,7 +855,7 @@ SelectionEdit edit_from_modifiers(bool shift, bool remove) {
 }
 
 godot::MeshInstance3D *make_overlay_instance(const char *name, godot::Node3D *parent) {
-	auto *instance = memnew(godot::MeshInstance3D);
+	godot::MeshInstance3D *instance = memnew(godot::MeshInstance3D);
 	instance->set_name(name);
 	parent->add_child(instance);
 	return instance;
@@ -1094,13 +877,9 @@ void set_overlay_mesh(godot::MeshInstance3D *instance, const godot::Ref<godot::A
 void QuaderViewportControl::_bind_methods() {}
 
 void QuaderViewportControl::release_mouse_capture() {
-	orbiting_ = false;
-	panning_ = false;
 	end_transform_drag();
 	box_drag_active_ = false;
-	if (fly_active_) {
-		end_fly();
-	}
+	camera_bridge_.release_mouse_capture();
 }
 
 void QuaderViewportControl::_notification(int what) {
@@ -1141,7 +920,7 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 				const SelectionEdit edit = edit_from_modifiers(mouse_button->is_shift_pressed(), remove);
 				static_cast<void>(select_at(mouse_button->get_position(), edit));
 				update_transform_gizmo_hover(mouse_button->get_position());
-				if (gizmo_hover_axis_ == render::TransformGizmoAxis::None) {
+				if (!gizmo::has_gizmo_handle(hovered_gizmo_handle_)) {
 					update_hover(mouse_button->get_position(), remove);
 				}
 			} else {
@@ -1155,36 +934,16 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 			accept_event();
 			return;
 		}
-		if (button == godot::MOUSE_BUTTON_MIDDLE) {
-			if (mouse_button->is_pressed()) {
-				panning_ = mouse_button->is_shift_pressed() || keyboard_shift_pressed();
-				orbiting_ = !panning_;
+		const CameraInputResult camera_button_result =
+				camera_bridge_.handle_mouse_button(mouse_button, keyboard_shift_pressed());
+		if (camera_button_result.consumed) {
+			if (mouse_button->is_pressed() &&
+					(button == godot::MOUSE_BUTTON_MIDDLE || button == godot::MOUSE_BUTTON_RIGHT)) {
 				grab_focus();
-			} else {
-				orbiting_ = false;
-				panning_ = false;
 			}
-			accept_event();
-			return;
-		}
-		if (button == godot::MOUSE_BUTTON_RIGHT) {
-			if (mouse_button->is_pressed()) {
-				begin_fly();
-			} else {
-				end_fly();
+			if (camera_button_result.changed) {
+				invalidate_overlays();
 			}
-			accept_event();
-			return;
-		}
-		if (button == godot::MOUSE_BUTTON_WHEEL_UP && mouse_button->is_pressed()) {
-			camera_controller_.zoom(1.0f);
-			update_camera();
-			accept_event();
-			return;
-		}
-		if (button == godot::MOUSE_BUTTON_WHEEL_DOWN && mouse_button->is_pressed()) {
-			camera_controller_.zoom(-1.0f);
-			update_camera();
 			accept_event();
 			return;
 		}
@@ -1192,36 +951,22 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 
 	godot::Ref<godot::InputEventMouseMotion> mouse_motion = event;
 	if (mouse_motion.is_valid()) {
-		const godot::Vector2 relative = mouse_motion->get_relative();
-		const godot::Vector2 quader_delta{-relative.x, relative.y};
-		const bool shift_pressed = mouse_motion->is_shift_pressed() || keyboard_shift_pressed();
 		if (box_drag_active_) {
 			update_box_drag(mouse_motion->get_position());
 			accept_event();
 			return;
 		}
-		if (transform_drag_active_) {
+		if (active_gizmo_drag_ != nullptr) {
 			update_transform_drag(mouse_motion->get_position());
 			accept_event();
 			return;
 		}
-		if (panning_ || (orbiting_ && shift_pressed)) {
-			panning_ = true;
-			orbiting_ = false;
-			camera_controller_.pan(relative, std::max(get_size().y, 1.0f));
-			update_camera();
-			accept_event();
-			return;
-		}
-		if (orbiting_) {
-			camera_controller_.orbit(quader_delta);
-			update_camera();
-			accept_event();
-			return;
-		}
-		if (fly_active_) {
-			camera_controller_.fly_look(quader_delta);
-			update_camera();
+		const CameraInputResult camera_motion_result =
+				camera_bridge_.handle_mouse_motion(mouse_motion, std::max(get_size().y, 1.0f), keyboard_shift_pressed());
+		if (camera_motion_result.consumed) {
+			if (camera_motion_result.changed) {
+				invalidate_overlays();
+			}
 			accept_event();
 			return;
 		}
@@ -1231,7 +976,7 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 			return;
 		}
 		update_transform_gizmo_hover(mouse_motion->get_position());
-		if (gizmo_hover_axis_ != render::TransformGizmoAxis::None) {
+		if (gizmo::has_gizmo_handle(hovered_gizmo_handle_)) {
 			clear_hover();
 			accept_event();
 			return;
@@ -1249,11 +994,11 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 		if (!key->is_pressed()) {
 			return;
 		}
-		if (fly_active_) {
-			if (key->get_keycode() == godot::KEY_ESCAPE) {
-				end_fly();
-				accept_event();
-			}
+		if (key->get_keycode() == godot::KEY_ESCAPE && camera_bridge_.handle_escape()) {
+			accept_event();
+			return;
+		}
+		if (camera_bridge_.core().is_flying()) {
 			return;
 		}
 		if (key->get_keycode() == godot::KEY_ESCAPE && box_tool_active_) {
@@ -1266,9 +1011,9 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 			accept_event();
 			return;
 		}
-		if (const std::optional<render::TransformGizmoTool> tool = transform_tool_for_key(key->get_keycode())) {
+		if (transform_gizmo_key(key->get_keycode())) {
 			cancel_box_tool();
-			set_transform_tool(*tool);
+			set_active_gizmo(gizmo::gizmo_for_shortcut(key->get_keycode()));
 			accept_event();
 			return;
 		}
@@ -1276,7 +1021,7 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 			cancel_box_tool();
 			selection_mode_ = *mode;
 			clear_hover();
-			gizmo_hover_axis_ = render::TransformGizmoAxis::None;
+			hovered_gizmo_handle_ = gizmo::GizmoHandle::None;
 			invalidate_overlays();
 			accept_event();
 			return;
@@ -1300,9 +1045,8 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 }
 
 void QuaderViewportControl::_process(double delta) {
-	if (fly_active_) {
-		handle_keyboard(delta);
-		update_camera();
+	if (camera_bridge_.update(delta)) {
+		invalidate_overlays();
 	}
 	refresh_overlays_if_dirty();
 }
@@ -1386,8 +1130,7 @@ void QuaderViewportControl::build_viewport() {
 	transform_gizmo_triangle_overlay_ = make_overlay_instance("TransformGizmoTriangleOverlay", overlay_root_);
 	transform_gizmo_line_overlay_ = make_overlay_instance("TransformGizmoLineOverlay", overlay_root_);
 
-	camera_ = render::make_camera();
-	scene_root_->add_child(camera_);
+	camera_bridge_.build(scene_root_);
 	invalidate_overlays();
 	refresh_overlays_if_dirty();
 }
@@ -1401,7 +1144,6 @@ void QuaderViewportControl::update_subviewport_size() {
 }
 
 void QuaderViewportControl::update_camera() {
-	camera_controller_.apply_to(camera_);
 	invalidate_overlays();
 }
 
@@ -1413,10 +1155,11 @@ void QuaderViewportControl::refresh_scene_meshes() {
 	const std::vector<modeling::MeshObjectSnapshot> objects = modeling_.objects();
 	bool changed = false;
 	for (const modeling::MeshObjectSnapshot &object : objects) {
-		auto found = std::find_if(scene_meshes_.begin(), scene_meshes_.end(),
-				[&](const SceneMeshNode &node) { return same_object(node.object, object.object); });
+		std::vector<SceneMeshNode>::iterator found =
+				std::find_if(scene_meshes_.begin(), scene_meshes_.end(),
+						[&](const SceneMeshNode &node) { return same_object(node.object, object.object); });
 		if (found == scene_meshes_.end()) {
-			auto *instance = memnew(godot::MeshInstance3D);
+			godot::MeshInstance3D *instance = memnew(godot::MeshInstance3D);
 			instance->set_name(godot::String(object.name.c_str()));
 			scene_root_->add_child(instance);
 			scene_meshes_.push_back({
@@ -1438,7 +1181,8 @@ void QuaderViewportControl::refresh_scene_meshes() {
 }
 
 void QuaderViewportControl::refresh_overlays() {
-	if (!built_ || camera_ == nullptr || selection_face_overlay_ == nullptr) {
+	const godot::Camera3D *camera = camera_bridge_.camera();
+	if (!built_ || camera == nullptr || selection_face_overlay_ == nullptr) {
 		return;
 	}
 
@@ -1470,7 +1214,8 @@ void QuaderViewportControl::refresh_overlays() {
 			append_all_edge_segments(object, selection_wire);
 		}
 
-		const bool draws_source_wire = std::find(source_objects.begin(), source_objects.end(), object.object) != source_objects.end();
+		const bool draws_source_wire =
+				std::find(source_objects.begin(), source_objects.end(), object.object) != source_objects.end();
 		if (component_mode && draws_source_wire) {
 			append_all_edge_segments(object, source_wire);
 			source_component_draw_on_top = source_component_draw_on_top || authored_faces_are_inside_out(object.authored);
@@ -1526,7 +1271,7 @@ void QuaderViewportControl::refresh_overlays() {
 	}
 
 	if (box_preview_visible_) {
-		append_box_preview_segments(camera_, box_preview_, box_preview_wire);
+		append_box_preview_segments(camera, box_preview_, box_preview_wire);
 	}
 
 	const bool remove_preview = component_mode && hover_target_.kind != SelectionKind::Object &&
@@ -1557,69 +1302,72 @@ void QuaderViewportControl::refresh_overlays() {
 	set_overlay_mesh(hover_face_overlay_, render::make_overlay_face_mesh(hover_faces),
 			render::make_overlay_face_material(hover_face_color, draw_on_top, kHoverFaceRenderPriority));
 	set_overlay_mesh(source_wire_overlay_,
-			render::make_overlay_line_mesh(source_wire, camera_, viewport_size, visual_settings_.source_wire_line_size,
+			render::make_overlay_line_mesh(source_wire, camera, viewport_size, visual_settings_.source_wire_line_size,
 					source_line_depth_bias),
 			render::make_overlay_line_material(visual_settings_.source_wire_color, source_wire_draw_on_top,
 					kSourceWireRenderPriority, source_clip_depth_bias));
 	set_overlay_mesh(selection_wire_overlay_,
-			render::make_overlay_line_mesh(selection_wire, camera_, viewport_size,
+			render::make_overlay_line_mesh(selection_wire, camera, viewport_size,
 					selection_mode_ == SelectionMode::Edge ? visual_settings_.selection_edge_line_size
 														   : visual_settings_.selection_face_wire_line_size,
 					selected_line_depth_bias),
 			render::make_overlay_line_material(visual_settings_.selection_wire_color, draw_on_top,
 					kSelectedWireRenderPriority, selected_clip_depth_bias));
 	set_overlay_mesh(hover_wire_overlay_,
-			render::make_overlay_line_mesh(hover_wire, camera_, viewport_size, visual_settings_.hover_wire_line_size,
+			render::make_overlay_line_mesh(hover_wire, camera, viewport_size, visual_settings_.hover_wire_line_size,
 					hover_line_depth_bias),
-			render::make_overlay_line_material(hover_wire_color, draw_on_top, kHoverRenderPriority, hover_clip_depth_bias));
+			render::make_overlay_line_material(hover_wire_color, draw_on_top, kHoverRenderPriority,
+					hover_clip_depth_bias));
 
 	set_overlay_mesh(vertex_overlay_,
-			render::make_overlay_point_mesh(vertex_points, camera_, viewport_size, visual_settings_.vertex_size,
+			render::make_overlay_point_mesh(vertex_points, camera, viewport_size, visual_settings_.vertex_size,
 					vertex_draw_on_top ? 0.0f : source_point_depth_bias),
 			render::make_overlay_point_material(visual_settings_.vertex_color, vertex_draw_on_top,
 					kVertexBaseRenderPriority,
 					source_clip_depth_bias));
 	set_overlay_mesh(selected_vertex_outline_overlay_,
-			render::make_overlay_point_mesh(selected_vertex_points, camera_, viewport_size,
+			render::make_overlay_point_mesh(selected_vertex_points, camera, viewport_size,
 					visual_settings_.vertex_size + visual_settings_.selected_vertex_growth +
 							visual_settings_.vertex_outline_size,
 					vertex_draw_on_top ? 0.0f : selected_point_depth_bias),
 			render::make_overlay_point_material(visual_settings_.vertex_outline_color, vertex_draw_on_top,
 					kSelectedVertexOutlineRenderPriority, selected_clip_depth_bias));
 	set_overlay_mesh(selected_vertex_overlay_,
-			render::make_overlay_point_mesh(selected_vertex_points, camera_, viewport_size,
+			render::make_overlay_point_mesh(selected_vertex_points, camera, viewport_size,
 					visual_settings_.vertex_size + visual_settings_.selected_vertex_growth,
 					vertex_draw_on_top ? 0.0f : selected_point_depth_bias),
 			render::make_overlay_point_material(visual_settings_.selected_vertex_color, vertex_draw_on_top,
 					kVertexSelectedRenderPriority, selected_clip_depth_bias));
 	set_overlay_mesh(hover_vertex_outline_overlay_,
-			render::make_overlay_point_mesh(hover_vertex_points, camera_, viewport_size,
+			render::make_overlay_point_mesh(hover_vertex_points, camera, viewport_size,
 					visual_settings_.vertex_size + visual_settings_.hover_vertex_growth +
 							visual_settings_.vertex_outline_size,
 					vertex_draw_on_top ? 0.0f : hover_point_depth_bias),
 			render::make_overlay_point_material(visual_settings_.vertex_outline_color, vertex_draw_on_top,
 					kHoverVertexOutlineRenderPriority, hover_clip_depth_bias));
 	set_overlay_mesh(hover_vertex_overlay_,
-			render::make_overlay_point_mesh(hover_vertex_points, camera_, viewport_size,
+			render::make_overlay_point_mesh(hover_vertex_points, camera, viewport_size,
 					visual_settings_.vertex_size + visual_settings_.hover_vertex_growth,
 					vertex_draw_on_top ? 0.0f : hover_point_depth_bias),
-			render::make_overlay_point_material(hover_vertex_color, vertex_draw_on_top, kVertexHoverRenderPriority,
-					hover_clip_depth_bias));
+			render::make_overlay_point_material(hover_vertex_color, vertex_draw_on_top,
+					kVertexHoverRenderPriority, hover_clip_depth_bias));
 	set_overlay_mesh(box_preview_wire_overlay_,
-			render::make_overlay_line_mesh(box_preview_wire, camera_, viewport_size, kBoxPreviewLineWidthPixels),
+			render::make_overlay_line_mesh(box_preview_wire, camera, viewport_size, kBoxPreviewLineWidthPixels),
 			render::make_overlay_line_material(box_preview_line_color(), true, kBoxPreviewRenderPriority));
 
-	render::TransformGizmoMeshes gizmo_meshes = render::make_transform_gizmo_meshes(transform_gizmo_input(objects));
+	const gizmo::GizmoMeshes gizmo_meshes = active_gizmo_ != nullptr
+			? active_gizmo_->draw(transform_gizmo_input(objects))
+			: gizmo::make_empty_gizmo_meshes();
 	set_overlay_mesh(transform_gizmo_triangle_overlay_, gizmo_meshes.triangles,
-			render::make_transform_gizmo_triangle_material());
-	set_overlay_mesh(transform_gizmo_line_overlay_, gizmo_meshes.lines, render::make_transform_gizmo_line_material());
+			gizmo::make_gizmo_triangle_material());
+	set_overlay_mesh(transform_gizmo_line_overlay_, gizmo_meshes.lines, gizmo::make_gizmo_line_material());
 }
 
 void QuaderViewportControl::refresh_overlays_if_dirty() {
 	if (!overlays_dirty_) {
 		return;
 	}
-	if (!built_ || camera_ == nullptr || selection_face_overlay_ == nullptr) {
+	if (!built_ || camera_bridge_.camera() == nullptr || selection_face_overlay_ == nullptr) {
 		return;
 	}
 	overlays_dirty_ = false;
@@ -1648,12 +1396,13 @@ void QuaderViewportControl::clear_hover() {
 }
 
 void QuaderViewportControl::update_hover(godot::Vector2 position, bool remove_preview) {
-	if (camera_ == nullptr) {
+	const godot::Camera3D *camera = camera_bridge_.camera();
+	if (camera == nullptr) {
 		clear_hover();
 		return;
 	}
 	const std::vector<modeling::MeshObjectSnapshot> objects = modeling_.overlay_objects();
-	const Ray ray = make_ray(camera_, position);
+	const Ray ray = make_ray(camera, position);
 	const PickHit surface_hit = pick_face_target(objects, ray, SelectionKind::Face);
 	const std::vector<ComponentSourceObjectState> source_states = component_source_states(objects);
 	const ObjectId hover_candidate = component_hover_candidate(selection_mode_, component_source_candidate_,
@@ -1698,11 +1447,12 @@ void QuaderViewportControl::update_hover(godot::Vector2 position, bool remove_pr
 }
 
 bool QuaderViewportControl::select_at(godot::Vector2 position, SelectionEdit edit) {
-	if (camera_ == nullptr) {
+	const godot::Camera3D *camera = camera_bridge_.camera();
+	if (camera == nullptr) {
 		return false;
 	}
 	const std::vector<modeling::MeshObjectSnapshot> objects = modeling_.overlay_objects();
-	const Ray ray = make_ray(camera_, position);
+	const Ray ray = make_ray(camera, position);
 	const PickHit surface_hit = pick_face_target(objects, ray, SelectionKind::Face);
 	const std::vector<ComponentSourceObjectState> source_states = component_source_states(objects);
 	const ObjectId hover_candidate = component_hover_candidate(selection_mode_, component_source_candidate_,
@@ -1753,25 +1503,43 @@ bool QuaderViewportControl::select_at(godot::Vector2 position, SelectionEdit edi
 	return true;
 }
 
-void QuaderViewportControl::set_transform_tool(render::TransformGizmoTool tool) {
-	if (transform_tool_ == tool) {
+void QuaderViewportControl::set_active_gizmo(const gizmo::Gizmo *gizmo) {
+	if (active_gizmo_ == gizmo) {
 		return;
 	}
-	transform_tool_ = tool;
-	gizmo_hover_axis_ = render::TransformGizmoAxis::None;
-	gizmo_active_axis_ = render::TransformGizmoAxis::None;
-	transform_drag_active_ = false;
+	active_gizmo_ = gizmo;
+	hovered_gizmo_handle_ = gizmo::GizmoHandle::None;
+	active_gizmo_drag_.reset();
 	invalidate_overlays();
+}
+
+gizmo::GizmoMutationResult QuaderViewportControl::apply_gizmo_mutation(const gizmo::GizmoMutation &mutation) {
+	OperationReceipt receipt;
+	switch (mutation.kind) {
+	case gizmo::GizmoMutationKind::TranslateSelection:
+		receipt = modeling_.translate_selected_meshes(to_modeling(mutation.value));
+		break;
+	case gizmo::GizmoMutationKind::RotateSelection:
+		receipt = modeling_.rotate_selected_meshes(to_modeling(mutation.value), to_modeling(mutation.pivot));
+		break;
+	case gizmo::GizmoMutationKind::ScaleSelection:
+		receipt = modeling_.scale_selected_meshes(to_modeling(mutation.value), to_modeling(mutation.pivot));
+		break;
+	}
+	return {
+			.success = receipt.success,
+			.changed = receipt.success && receipt.changed,
+	};
 }
 
 void QuaderViewportControl::activate_box_tool() {
 	box_tool_active_ = true;
 	box_drag_active_ = false;
 	box_preview_visible_ = false;
-	box_plane_ = make_box_construction_plane({0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+	box_plane_ = make_box_construction_plane({}, {0.0f, 1.0f, 0.0f});
 	box_preview_ = {};
 	clear_hover();
-	set_transform_tool(render::TransformGizmoTool::None);
+	set_active_gizmo(nullptr);
 	selection_mode_ = SelectionMode::Mesh;
 	grab_focus();
 	invalidate_overlays();
@@ -1789,16 +1557,16 @@ void QuaderViewportControl::cancel_box_tool() {
 }
 
 std::optional<godot::Vector3> QuaderViewportControl::box_construction_point(godot::Vector2 position, bool seed_plane) {
-	if (camera_ == nullptr) {
+	const godot::Camera3D *camera = camera_bridge_.camera();
+	if (camera == nullptr) {
 		return std::nullopt;
 	}
-	const Ray ray = make_ray(camera_, position);
+	const Ray ray = make_ray(camera, position);
 	if (seed_plane) {
 		const std::vector<modeling::MeshObjectSnapshot> objects = modeling_.overlay_objects();
 		const PickHit hit = pick_face_target(objects, ray, SelectionKind::Face);
-		box_plane_ = hit.hit && hit.normal.length_squared() > kToolEpsilon * kToolEpsilon
-				? make_box_construction_plane(hit.position, hit.normal)
-				: make_box_construction_plane({0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+		box_plane_ = hit.hit ? make_box_construction_plane(hit.position, hit.normal)
+							 : make_box_construction_plane({}, {0.0f, 1.0f, 0.0f});
 	}
 	godot::Vector3 point;
 	if (!intersect_ray_plane(ray, box_plane_, point)) {
@@ -1903,9 +1671,9 @@ std::optional<godot::Vector3> QuaderViewportControl::selected_mesh_pivot(
 	return sum / static_cast<float>(count);
 }
 
-TransformDragBounds QuaderViewportControl::selected_mesh_bounds(
+gizmo::GizmoSelectionBounds QuaderViewportControl::selected_mesh_bounds(
 		std::span<const modeling::MeshObjectSnapshot> objects) const {
-	TransformDragBounds bounds;
+	gizmo::GizmoSelectionBounds bounds;
 	for (const modeling::MeshObjectSnapshot &object : objects) {
 		if (!object.mesh_selected) {
 			continue;
@@ -1929,13 +1697,12 @@ TransformDragBounds QuaderViewportControl::selected_mesh_bounds(
 	return bounds;
 }
 
-render::TransformGizmoInput QuaderViewportControl::transform_gizmo_input(
+gizmo::GizmoInput QuaderViewportControl::transform_gizmo_input(
 		std::span<const modeling::MeshObjectSnapshot> objects) const {
-	render::TransformGizmoInput input;
-	input.tool = transform_tool_;
-	input.hover_axis = gizmo_hover_axis_;
-	input.active_axis = gizmo_active_axis_;
-	input.camera = camera_;
+	gizmo::GizmoInput input;
+	input.hovered_handle = hovered_gizmo_handle_;
+	input.active_handle = active_gizmo_drag_ != nullptr ? active_gizmo_drag_->handle() : gizmo::GizmoHandle::None;
+	input.camera = camera_bridge_.camera();
 	input.viewport_size = get_size();
 	input.has_selection = selection_mode_ == SelectionMode::Mesh;
 	if (const std::optional<godot::Vector3> pivot = selected_mesh_pivot(objects)) {
@@ -1946,197 +1713,81 @@ render::TransformGizmoInput QuaderViewportControl::transform_gizmo_input(
 }
 
 bool QuaderViewportControl::begin_transform_drag(godot::Vector2 position) {
-	if (selection_mode_ != SelectionMode::Mesh || transform_tool_ == render::TransformGizmoTool::None ||
-			camera_ == nullptr) {
+	if (selection_mode_ != SelectionMode::Mesh || active_gizmo_ == nullptr || camera_bridge_.camera() == nullptr) {
 		return false;
 	}
 	const std::vector<modeling::MeshObjectSnapshot> objects = modeling_.overlay_objects();
-	render::TransformGizmoInput input = transform_gizmo_input(objects);
-	render::TransformGizmoPickHit hit = render::pick_transform_gizmo(input, position);
+	gizmo::GizmoInput input = transform_gizmo_input(objects);
+	gizmo::GizmoPickHit hit = active_gizmo_->pick(input, position);
 	if (!hit.hit) {
 		return false;
 	}
-	transform_drag_active_ = true;
-	gizmo_active_axis_ = hit.axis;
-	gizmo_hover_axis_ = hit.axis;
-	transform_drag_last_position_ = position;
-	transform_drag_start_pivot_ = input.pivot;
-	transform_drag_pivot_ = input.pivot;
-	transform_drag_unsnapped_move_ = {};
-	transform_drag_applied_move_ = {};
-	transform_drag_bounds_ = selected_mesh_bounds(objects);
-	transform_drag_unsnapped_angle_ = 0.0f;
-	transform_drag_applied_angle_ = 0.0f;
-	transform_drag_unsnapped_scale_amount_ = 0.0f;
-	transform_drag_applied_scale_factor_ = 1.0f;
+	gizmo::GizmoDragStart start;
+	start.hit = hit;
+	start.screen_position = position;
+	start.pivot = input.pivot;
+	start.selection_bounds = selected_mesh_bounds(objects);
+	active_gizmo_drag_ = active_gizmo_->begin_drag(start);
+	if (active_gizmo_drag_ == nullptr) {
+		return false;
+	}
+	hovered_gizmo_handle_ = hit.handle;
 	clear_hover();
 	invalidate_overlays();
 	return true;
 }
 
 void QuaderViewportControl::update_transform_drag(godot::Vector2 position) {
-	if (!transform_drag_active_ || camera_ == nullptr || gizmo_active_axis_ == render::TransformGizmoAxis::None) {
+	const godot::Camera3D *camera = camera_bridge_.camera();
+	if (active_gizmo_drag_ == nullptr || camera == nullptr) {
 		return;
 	}
-	const godot::Vector2 delta = position - transform_drag_last_position_;
-	if (delta.length_squared() <= 0.0001f) {
+	gizmo::GizmoDragContext context;
+	context.position = position;
+	context.camera = camera;
+	context.viewport_size = get_size();
+	context.grid_size = visual_settings_.grid_world_size;
+	context.snap_enabled = !keyboard_snap_disabled();
+	bool scene_changed = false;
+	context.apply_mutation = [this, &scene_changed](const gizmo::GizmoMutation &mutation) {
+		const gizmo::GizmoMutationResult result = apply_gizmo_mutation(mutation);
+		scene_changed = scene_changed || result.changed;
+		return result;
+	};
+	const gizmo::GizmoDragOperation operation = active_gizmo_drag_->update_drag(context);
+	if (!operation.dragged) {
 		return;
 	}
-
-	OperationReceipt receipt;
-	const bool snap_enabled = !keyboard_snap_disabled();
-	if (transform_tool_ == render::TransformGizmoTool::Move) {
-		godot::Vector3 world_delta;
-		if (transform_axis_is_plane(gizmo_active_axis_)) {
-			const std::array<godot::Vector3, 2> axes = transform_plane_axes(gizmo_active_axis_);
-			const godot::Vector2 screen_pivot = camera_->unproject_position(transform_drag_pivot_);
-			const godot::Vector2 screen_a = camera_->unproject_position(transform_drag_pivot_ + axes[0]) - screen_pivot;
-			const godot::Vector2 screen_b = camera_->unproject_position(transform_drag_pivot_ + axes[1]) - screen_pivot;
-			const float determinant = screen_a.x * screen_b.y - screen_a.y * screen_b.x;
-			if (std::abs(determinant) > 0.0001f) {
-				const float a = (delta.x * screen_b.y - delta.y * screen_b.x) / determinant;
-				const float b = (screen_a.x * delta.y - screen_a.y * delta.x) / determinant;
-				world_delta = axes[0] * a + axes[1] * b;
-			}
-		} else {
-			const godot::Vector3 axis = transform_axis_vector(gizmo_active_axis_);
-			const godot::Vector2 screen_axis =
-					camera_->unproject_position(transform_drag_pivot_ + axis) - camera_->unproject_position(transform_drag_pivot_);
-			if (screen_axis.length_squared() > 0.0001f) {
-				const float world_units = viewport_world_units_per_pixel_at(camera_, get_size(), transform_drag_pivot_);
-				world_delta = axis * (delta.dot(screen_axis.normalized()) * world_units);
-			}
-		}
-		transform_drag_unsnapped_move_ += world_delta;
-		const godot::Vector3 target_move = snap_enabled
-				? snap_center_drag_delta(gizmo_active_axis_, transform_drag_start_pivot_, transform_drag_unsnapped_move_,
-						  visual_settings_.grid_world_size)
-				: transform_drag_unsnapped_move_;
-		const godot::Vector3 apply_delta = target_move - transform_drag_applied_move_;
-		if (apply_delta.length_squared() > kToolEpsilon * kToolEpsilon) {
-			receipt = modeling_.translate_selected_meshes(to_modeling(apply_delta));
-			if (receipt.success && receipt.changed) {
-				transform_drag_applied_move_ = target_move;
-				transform_drag_pivot_ = transform_drag_start_pivot_ + transform_drag_applied_move_;
-			}
-		}
-	} else if (transform_tool_ == render::TransformGizmoTool::Rotate) {
-		const godot::Vector2 screen_pivot = camera_->unproject_position(transform_drag_pivot_);
-		const godot::Vector2 before = transform_drag_last_position_ - screen_pivot;
-		const godot::Vector2 after = position - screen_pivot;
-		if (before.length_squared() > 0.0001f && after.length_squared() > 0.0001f) {
-			const float cross = before.x * after.y - before.y * after.x;
-			const float dot = before.dot(after);
-			transform_drag_unsnapped_angle_ += -std::atan2(cross, dot);
-			const float target_angle = snap_enabled ? snap_to_step(transform_drag_unsnapped_angle_, kRotateSnapRadians)
-													: transform_drag_unsnapped_angle_;
-			const float apply_angle = target_angle - transform_drag_applied_angle_;
-			if (std::abs(apply_angle) > kToolEpsilon) {
-				receipt = modeling_.rotate_selected_meshes(axis_radians(gizmo_active_axis_, apply_angle),
-						to_modeling(transform_drag_pivot_));
-				if (receipt.success && receipt.changed) {
-					transform_drag_applied_angle_ = target_angle;
-				}
-			}
-		}
-	} else if (transform_tool_ == render::TransformGizmoTool::Scale) {
-		float amount = 0.0f;
-		if (gizmo_active_axis_ == render::TransformGizmoAxis::All) {
-			amount = delta.x - delta.y;
-		} else if (transform_axis_is_plane(gizmo_active_axis_)) {
-			const std::array<godot::Vector3, 2> axes = transform_plane_axes(gizmo_active_axis_);
-			const godot::Vector2 screen_pivot = camera_->unproject_position(transform_drag_pivot_);
-			const godot::Vector2 screen_a = camera_->unproject_position(transform_drag_pivot_ + axes[0]) - screen_pivot;
-			const godot::Vector2 screen_b = camera_->unproject_position(transform_drag_pivot_ + axes[1]) - screen_pivot;
-			godot::Vector2 screen_axis = screen_a.normalized() + screen_b.normalized();
-			if (screen_axis.length_squared() > 0.0001f) {
-				amount = delta.dot(screen_axis.normalized());
-			}
-		} else {
-			const godot::Vector3 axis = transform_axis_vector(gizmo_active_axis_);
-			const godot::Vector2 screen_axis =
-					camera_->unproject_position(transform_drag_pivot_ + axis) - camera_->unproject_position(transform_drag_pivot_);
-			if (screen_axis.length_squared() > 0.0001f) {
-				amount = delta.dot(screen_axis.normalized());
-			}
-		}
-		transform_drag_unsnapped_scale_amount_ += amount;
-		float factor = std::max(kMinScaleFactor, 1.0f + transform_drag_unsnapped_scale_amount_ / kScalePixelsPerFactor);
-		factor = snapped_scale_factor(gizmo_active_axis_, factor, transform_drag_bounds_, transform_drag_pivot_, snap_enabled,
-				visual_settings_.grid_world_size);
-		const float relative_factor = factor / std::max(transform_drag_applied_scale_factor_, kMinScaleFactor);
-		if (std::abs(relative_factor - 1.0f) > kToolEpsilon) {
-			receipt = modeling_.scale_selected_meshes(axis_scale(gizmo_active_axis_, relative_factor),
-					to_modeling(transform_drag_pivot_));
-			if (receipt.success && receipt.changed) {
-				transform_drag_applied_scale_factor_ = factor;
-			}
-		}
-	}
-
-	transform_drag_last_position_ = position;
-	if (receipt.success && receipt.changed) {
+	if (scene_changed || operation.changed) {
 		refresh_scene_meshes();
 	}
 	invalidate_overlays();
 }
 
 void QuaderViewportControl::end_transform_drag() {
-	if (!transform_drag_active_) {
+	if (active_gizmo_drag_ == nullptr) {
 		return;
 	}
-	transform_drag_active_ = false;
-	gizmo_active_axis_ = render::TransformGizmoAxis::None;
+	active_gizmo_drag_.reset();
 	invalidate_overlays();
 }
 
 void QuaderViewportControl::update_transform_gizmo_hover(godot::Vector2 position) {
-	if (selection_mode_ != SelectionMode::Mesh || transform_tool_ == render::TransformGizmoTool::None ||
-			camera_ == nullptr || transform_drag_active_) {
-		if (gizmo_hover_axis_ != render::TransformGizmoAxis::None && !transform_drag_active_) {
-			gizmo_hover_axis_ = render::TransformGizmoAxis::None;
+	if (selection_mode_ != SelectionMode::Mesh || active_gizmo_ == nullptr || camera_bridge_.camera() == nullptr ||
+			active_gizmo_drag_ != nullptr) {
+		if (gizmo::has_gizmo_handle(hovered_gizmo_handle_) && active_gizmo_drag_ == nullptr) {
+			hovered_gizmo_handle_ = gizmo::GizmoHandle::None;
 			invalidate_overlays();
 		}
 		return;
 	}
 	const std::vector<modeling::MeshObjectSnapshot> objects = modeling_.overlay_objects();
-	const render::TransformGizmoPickHit hit = render::pick_transform_gizmo(transform_gizmo_input(objects), position);
-	const render::TransformGizmoAxis next_axis = hit.hit ? hit.axis : render::TransformGizmoAxis::None;
-	if (next_axis != gizmo_hover_axis_) {
-		gizmo_hover_axis_ = next_axis;
+	const gizmo::GizmoPickHit hit = active_gizmo_->pick(transform_gizmo_input(objects), position);
+	const gizmo::GizmoHandle next_handle = hit.hit ? hit.handle : gizmo::GizmoHandle::None;
+	if (next_handle != hovered_gizmo_handle_) {
+		hovered_gizmo_handle_ = next_handle;
 		invalidate_overlays();
 	}
-}
-
-void QuaderViewportControl::handle_keyboard(double delta) {
-	godot::Input *input = godot::Input::get_singleton();
-	if (input == nullptr) {
-		return;
-	}
-
-	godot::Vector3 local_direction;
-	if (input->is_physical_key_pressed(godot::KEY_W)) {
-		local_direction.z += 1.0f;
-	}
-	if (input->is_physical_key_pressed(godot::KEY_S)) {
-		local_direction.z -= 1.0f;
-	}
-	if (input->is_physical_key_pressed(godot::KEY_D)) {
-		local_direction.x += 1.0f;
-	}
-	if (input->is_physical_key_pressed(godot::KEY_A)) {
-		local_direction.x -= 1.0f;
-	}
-	if (input->is_physical_key_pressed(godot::KEY_E)) {
-		local_direction.y += 1.0f;
-	}
-	if (input->is_physical_key_pressed(godot::KEY_Q)) {
-		local_direction.y -= 1.0f;
-	}
-
-	const bool fast = input->is_key_pressed(godot::KEY_SHIFT);
-	const bool slow = input->is_key_pressed(godot::KEY_CTRL);
-	camera_controller_.fly_move(local_direction, delta, fast, slow);
 }
 
 void QuaderViewportControl::set_grid_preset(int preset) {
@@ -2158,25 +1809,6 @@ void QuaderViewportControl::set_grid_preset(int preset) {
 
 void QuaderViewportControl::set_grid_preset_changed_callback(std::function<void(int)> callback) {
 	grid_preset_changed_callback_ = std::move(callback);
-}
-
-void QuaderViewportControl::begin_fly() {
-	fly_active_ = true;
-	orbiting_ = false;
-	panning_ = false;
-	grab_focus();
-	godot::Input *input = godot::Input::get_singleton();
-	if (input != nullptr) {
-		input->set_mouse_mode(godot::Input::MOUSE_MODE_CAPTURED);
-	}
-}
-
-void QuaderViewportControl::end_fly() {
-	fly_active_ = false;
-	godot::Input *input = godot::Input::get_singleton();
-	if (input != nullptr && input->get_mouse_mode() == godot::Input::MOUSE_MODE_CAPTURED) {
-		input->set_mouse_mode(godot::Input::MOUSE_MODE_VISIBLE);
-	}
 }
 
 } // namespace quader_godot::viewport

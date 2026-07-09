@@ -1,45 +1,46 @@
 #include "ui/quader_editor_layout.h"
 
-#include "ui/panel_builder.h"
 #include "ui/components/organism/quader_sidebar.h"
-#include "ui/ui_tokens.h"
 
 #include <godot_cpp/classes/control.hpp>
 #include <godot_cpp/classes/h_split_container.hpp>
-#include <godot_cpp/classes/panel_container.hpp>
+#include <godot_cpp/classes/ref.hpp>
+#include <godot_cpp/classes/style_box_flat.hpp>
 #include <godot_cpp/core/memory.hpp>
+#include <godot_cpp/variant/color.hpp>
+#include <godot_cpp/variant/string.hpp>
 
 namespace quader_godot::ui {
 namespace {
 
 using godot::Control;
+using godot::Color;
 using godot::HSplitContainer;
+using godot::Ref;
 using godot::SplitContainer;
+using godot::String;
+using godot::StyleBoxFlat;
 
 constexpr int kSidebarSplitterWidth = 4;
 constexpr char kSidebarSplitterSurfaceColor[] = "#282828";
 
-void style_sidebar_splitter(HSplitContainer *splitter) {
-	PanelBuilder panel_builder{splitter};
-	splitter->set_name(UiNodeName::QuaderEditorBody);
-	splitter->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	splitter->set_v_size_flags(Control::SIZE_EXPAND_FILL);
-	splitter->set_dragging_enabled(true);
-	splitter->set_dragger_visibility(SplitContainer::DRAGGER_VISIBLE);
-	splitter->add_theme_constant_override(ConstantOverride::Separation, kSidebarSplitterWidth);
-	splitter->add_theme_constant_override(ConstantOverride::MinimumGrabThickness, kSidebarSplitterWidth);
-	splitter->add_theme_constant_override(ConstantOverride::Autohide, 0);
-	panel_builder.override(StyleOverride::SplitBarBackground)
-			->make_flat()
-			->set_background(kSidebarSplitterSurfaceColor)
-			->apply();
-}
-
 } // namespace
 
 Control *make_quader_editor_body(Control *viewport) {
-	auto *body = memnew(HSplitContainer);
-	style_sidebar_splitter(body);
+	HSplitContainer *body = memnew(HSplitContainer);
+	body->set_name("QuaderEditorBody");
+	body->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	body->set_v_size_flags(Control::SIZE_EXPAND_FILL);
+	body->set_dragging_enabled(true);
+	body->set_dragger_visibility(SplitContainer::DRAGGER_VISIBLE);
+	body->add_theme_constant_override("separation", kSidebarSplitterWidth);
+	body->add_theme_constant_override("minimum_grab_thickness", kSidebarSplitterWidth);
+	body->add_theme_constant_override("autohide", 0);
+
+	Ref<StyleBoxFlat> split_bar_style;
+	split_bar_style.instantiate();
+	split_bar_style->set_bg_color(Color(String(kSidebarSplitterSurfaceColor)));
+	body->add_theme_stylebox_override("split_bar_background", split_bar_style);
 
 	if (viewport != nullptr) {
 		viewport->set_h_size_flags(Control::SIZE_EXPAND_FILL);

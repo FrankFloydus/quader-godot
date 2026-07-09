@@ -1,10 +1,10 @@
-#include "viewport/quader_component_source_policy.h"
+#include "selection/component_source_policy.h"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 
-namespace quader_godot::viewport {
+namespace quader::editor::selection {
 namespace {
 
 using quader::modeling::ObjectTag;
@@ -264,4 +264,4 @@ TEST(ComponentSourcePolicyTests, SourceWireKeepsFaceSelectionAcrossModesWithoutV
 }
 
 } // namespace
-} // namespace quader_godot::viewport
+} // namespace quader::editor::selection

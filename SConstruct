@@ -72,11 +72,18 @@ if env["target"] in ["editor", "template_debug"]:
 # .universal just means "compatible with all relevant arches" so we don't need to key it.
 suffix = env['suffix'].replace(".dev", "").replace(".universal", "")
 
+object_dir = os.path.join("build", "scons", "obj", env["platform"], env["target"], env["arch"])
+objects = []
+for source in sources:
+    source_path = os.path.normpath(str(source))
+    object_target = os.path.join(object_dir, os.path.splitext(source_path)[0])
+    objects.append(env.SharedObject(target=object_target, source=source))
+
 lib_filename = "{}{}{}{}".format(env.subst('$SHLIBPREFIX'), libname, suffix, env.subst('$SHLIBSUFFIX'))
 
 library = env.SharedLibrary(
     "bin/{}/{}".format(env['platform'], lib_filename),
-    source=sources,
+    source=objects,
 )
 
 copy = env.Install("{}/bin/{}/".format(projectdir, env["platform"]), library)

@@ -1,7 +1,5 @@
 #include "ui/quader_viewport_settings_window.h"
 
-#include "ui/ui_tokens.h"
-
 #include <godot_cpp/classes/color_picker_button.hpp>
 #include <godot_cpp/classes/control.hpp>
 #include <godot_cpp/classes/grid_container.hpp>
@@ -33,15 +31,15 @@ using godot::Window;
 using viewport::ViewportVisualSettings;
 
 Label *make_label(const char *text) {
-	auto *label = memnew(Label);
+	Label *label = memnew(Label);
 	label->set_text(text);
 	label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	return label;
 }
 
 void add_section_label(VBoxContainer *root, const char *text) {
-	auto *label = make_label(text);
-	label->add_theme_constant_override(ConstantOverride::MarginTop, 8);
+	Label *label = make_label(text);
+	label->add_theme_constant_override("margin_top", 8);
 	root->add_child(label);
 }
 
@@ -49,12 +47,12 @@ void add_color_row(GridContainer *grid, Object *target, const char *label_text,
 		const Color &value, const char *method, bool edit_alpha) {
 	grid->add_child(make_label(label_text));
 
-	auto *button = memnew(ColorPickerButton);
+	ColorPickerButton *button = memnew(ColorPickerButton);
 	button->set_pick_color(value);
 	button->set_edit_alpha(edit_alpha);
 	button->set_custom_minimum_size({160.0f, 28.0f});
 	button->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	button->connect(SignalName::ColorChanged, Callable(target, method));
+	button->connect("color_changed", Callable(target, method));
 	grid->add_child(button);
 }
 
@@ -62,19 +60,19 @@ void add_spin_row(GridContainer *grid, Object *target, const char *label_text,
 		double value, double minimum, double maximum, double step, const char *method) {
 	grid->add_child(make_label(label_text));
 
-	auto *spin = memnew(SpinBox);
+	SpinBox *spin = memnew(SpinBox);
 	spin->set_min(minimum);
 	spin->set_max(maximum);
 	spin->set_step(step);
 	spin->set_value(value);
 	spin->set_custom_minimum_size({160.0f, 28.0f});
 	spin->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	spin->connect(SignalName::ValueChanged, Callable(target, method));
+	spin->connect("value_changed", Callable(target, method));
 	grid->add_child(spin);
 }
 
 GridContainer *make_settings_grid() {
-	auto *grid = memnew(GridContainer);
+	GridContainer *grid = memnew(GridContainer);
 	grid->set_columns(2);
 	grid->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	return grid;
@@ -84,29 +82,29 @@ GridContainer *make_settings_grid() {
 
 Window *make_quader_viewport_settings_window(
 		Object *target, const ViewportVisualSettings &settings) {
-	auto *window = memnew(Window);
+	Window *window = memnew(Window);
 	window->set_title("Quader Settings");
 	window->set_size({480, 720});
 	window->set_min_size({420, 520});
 	window->set_wrap_controls(true);
 	window->set_transient(true);
-	window->connect(SignalName::CloseRequested, Callable(target, "hide_settings_window"));
+	window->connect("close_requested", Callable(target, "hide_settings_window"));
 
-	auto *margin = memnew(MarginContainer);
+	MarginContainer *margin = memnew(MarginContainer);
 	margin->set_anchors_preset(Control::PRESET_FULL_RECT);
-	margin->add_theme_constant_override(ConstantOverride::MarginLeft, 12);
-	margin->add_theme_constant_override(ConstantOverride::MarginTop, 12);
-	margin->add_theme_constant_override(ConstantOverride::MarginRight, 12);
-	margin->add_theme_constant_override(ConstantOverride::MarginBottom, 12);
+	margin->add_theme_constant_override("margin_left", 12);
+	margin->add_theme_constant_override("margin_top", 12);
+	margin->add_theme_constant_override("margin_right", 12);
+	margin->add_theme_constant_override("margin_bottom", 12);
 	window->add_child(margin);
 
-	auto *scroll = memnew(ScrollContainer);
+	ScrollContainer *scroll = memnew(ScrollContainer);
 	scroll->set_anchors_preset(Control::PRESET_FULL_RECT);
 	scroll->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	scroll->set_v_size_flags(Control::SIZE_EXPAND_FILL);
 	margin->add_child(scroll);
 
-	auto *root = memnew(VBoxContainer);
+	VBoxContainer *root = memnew(VBoxContainer);
 	root->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	scroll->add_child(root);
 

@@ -4,7 +4,6 @@
 #include "viewport/quader_viewport_visual_settings.h"
 
 #include <godot_cpp/classes/array_mesh.hpp>
-#include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/environment.hpp>
 #include <godot_cpp/classes/mesh_instance3d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
@@ -37,6 +36,5 @@ godot::Ref<godot::World3D> make_world();
 godot::Ref<godot::World3D> make_world(const godot::Ref<godot::Environment> &environment);
 godot::WorldEnvironment *make_world_environment();
 godot::WorldEnvironment *make_world_environment(const godot::Ref<godot::Environment> &environment);
-godot::Camera3D *make_camera();
 
 } // namespace quader_godot::render

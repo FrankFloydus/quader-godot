@@ -7,8 +7,8 @@
 
 #include "editor/quader_editor_plugin_host.h"
 #include "editor/quader_editor_window.h"
+#include "gizmo/gizmo.h"
 #include "render/quader_godot_selection_overlay.h"
-#include "render/quader_godot_transform_gizmo.h"
 #include "viewport/quader_viewport_control.h"
 
 using namespace godot;
@@ -28,7 +28,7 @@ void uninitialize_gdextension_types(ModuleInitializationLevel p_level) {
 		return;
 	}
 	quader_godot::render::clear_overlay_material_cache();
-	quader_godot::render::clear_transform_gizmo_material_cache();
+	quader_godot::gizmo::clear_gizmo_material_cache();
 }
 
 extern "C"

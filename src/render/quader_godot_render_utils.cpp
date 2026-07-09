@@ -328,7 +328,7 @@ godot::MeshInstance3D *make_ground_grid(const godot::Ref<godot::ShaderMaterial> 
 	plane.instantiate();
 	plane->set_size({kGridPlaneSize, kGridPlaneSize});
 
-	auto *instance = memnew(godot::MeshInstance3D);
+	godot::MeshInstance3D *instance = memnew(godot::MeshInstance3D);
 	instance->set_name("QuaderGroundGrid");
 	instance->set_mesh(plane);
 	instance->set_surface_override_material(0, material);
@@ -377,18 +377,10 @@ godot::WorldEnvironment *make_world_environment() {
 }
 
 godot::WorldEnvironment *make_world_environment(const godot::Ref<godot::Environment> &environment) {
-	auto *world = memnew(godot::WorldEnvironment);
+	godot::WorldEnvironment *world = memnew(godot::WorldEnvironment);
 	world->set_name("QuaderEnvironment");
 	world->set_environment(environment);
 	return world;
-}
-
-godot::Camera3D *make_camera() {
-	auto *camera = memnew(godot::Camera3D);
-	camera->set_name("QuaderCamera");
-	camera->set_perspective(60.0f, 0.05f, 1000.0f);
-	camera->set_current(true);
-	return camera;
 }
 
 } // namespace quader_godot::render

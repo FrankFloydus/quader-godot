@@ -1,8 +1,8 @@
-#include "viewport/quader_component_source_policy.h"
+#include "selection/component_source_policy.h"
 
 #include <algorithm>
 
-namespace quader_godot::viewport {
+namespace quader::editor::selection {
 namespace {
 
 bool has_mode_components(const ComponentSourceObjectState &object, SelectionMode mode) {
@@ -35,7 +35,7 @@ bool has_sticky_source_wire(const ComponentSourceObjectState &object, SelectionM
 
 const ComponentSourceObjectState *find_object(std::span<const ComponentSourceObjectState> objects,
 		ObjectId id) {
-	const auto found = std::find_if(objects.begin(), objects.end(),
+	const std::span<const ComponentSourceObjectState>::iterator found = std::find_if(objects.begin(), objects.end(),
 			[id](const ComponentSourceObjectState &object) { return object.object == id; });
 	return found == objects.end() ? nullptr : &*found;
 }
@@ -154,4 +154,4 @@ bool component_source_candidate_draws_unselected_vertices(
 			!candidate_object->has_selected_vertices;
 }
 
-} // namespace quader_godot::viewport
+} // namespace quader::editor::selection

@@ -216,10 +216,13 @@ godot::Ref<godot::Material> make_uncached_overlay_material(OverlayMaterialKind k
 godot::Ref<godot::Material> cached_overlay_material(OverlayMaterialKind kind, godot::Color color, bool draw_on_top,
 		int render_priority, float clip_depth_bias = 0.0f) {
 	std::vector<OverlayMaterialCacheEntry> &materials = overlay_resource_cache().materials;
-	const auto found = std::find_if(materials.begin(), materials.end(), [&](const OverlayMaterialCacheEntry &entry) {
-		return entry.kind == kind && entry.draw_on_top == draw_on_top && entry.render_priority == render_priority &&
-				std::abs(entry.clip_depth_bias - clip_depth_bias) <= 0.0000001f && same_color(entry.color, color);
-	});
+	const std::vector<OverlayMaterialCacheEntry>::iterator found =
+			std::find_if(materials.begin(), materials.end(), [&](const OverlayMaterialCacheEntry &entry) {
+				return entry.kind == kind && entry.draw_on_top == draw_on_top &&
+						entry.render_priority == render_priority &&
+						std::abs(entry.clip_depth_bias - clip_depth_bias) <= 0.0000001f &&
+						same_color(entry.color, color);
+			});
 	if (found != materials.end()) {
 		return found->material;
 	}
