@@ -6,18 +6,31 @@
 #include <utility>
 
 namespace quader_godot::modeling {
+
+using quader::modeling::AuthoredPolygonFacePayload;
+using quader::modeling::EdgeSelection;
+using quader::modeling::ErrorCode;
+using quader::modeling::ErrorPolicy;
+using quader::modeling::FaceSelection;
+using quader::modeling::MeshSummary;
+using quader::modeling::PolygonDocument;
+using quader::modeling::Result;
+using quader::modeling::VertexSelection;
+using quader::modeling::make_edge_key;
+using quader::modeling::make_error;
+
 namespace {
 
-std::vector<quader::modeling::EdgeKey> authored_edges(const quader::modeling::AuthoredPolygonPayload &payload) {
-	std::vector<quader::modeling::EdgeKey> edges;
-	for (const quader::modeling::AuthoredPolygonFacePayload &face : payload.faces) {
+std::vector<EdgeKey> authored_edges(const AuthoredPolygonPayload &payload) {
+	std::vector<EdgeKey> edges;
+	for (const AuthoredPolygonFacePayload &face : payload.faces) {
 		if (face.vertices.size() < 2U) {
 			continue;
 		}
 		for (std::size_t index = 0; index < face.vertices.size(); ++index) {
-			const quader::modeling::VertexId a = face.vertices[index];
-			const quader::modeling::VertexId b = face.vertices[(index + 1U) % face.vertices.size()];
-			quader::modeling::EdgeKey edge = quader::modeling::make_edge_key(a, b);
+			const VertexId a = face.vertices[index];
+			const VertexId b = face.vertices[(index + 1U) % face.vertices.size()];
+			EdgeKey edge = make_edge_key(a, b);
 			if (edge.valid()) {
 				edges.push_back(edge);
 			}
@@ -31,8 +44,8 @@ std::vector<quader::modeling::EdgeKey> authored_edges(const quader::modeling::Au
 } // namespace
 
 QuaderModelingAdapter::QuaderModelingAdapter()
-		: api_(quader::modeling::ModelingApi::create(
-				  {.error_policy = quader::modeling::ErrorPolicy::StoreLastError})) {}
+		: api_(ModelingApi::create(
+				  {.error_policy = ErrorPolicy::StoreLastError})) {}
 
 std::vector<MeshObjectSnapshot> QuaderModelingAdapter::objects() {
 	return snapshots(true);
@@ -44,8 +57,8 @@ std::vector<MeshObjectSnapshot> QuaderModelingAdapter::overlay_objects() {
 
 std::vector<MeshObjectSnapshot> QuaderModelingAdapter::snapshots(bool include_render_mesh) {
 	std::vector<MeshObjectSnapshot> snapshots;
-	for (const quader::modeling::MeshSummary &summary : api_.mesh_summaries()) {
-		quader::modeling::MeshHandle mesh = api_.mesh(summary.id);
+	for (const MeshSummary &summary : api_.mesh_summaries()) {
+		MeshHandle mesh = api_.mesh(summary.id);
 		MeshObjectSnapshot snapshot;
 		snapshot.object = summary.id;
 		snapshot.name = summary.name;
@@ -58,63 +71,63 @@ std::vector<MeshObjectSnapshot> QuaderModelingAdapter::snapshots(bool include_re
 		}
 		snapshot.edges = authored_edges(snapshot.authored);
 
-		const quader::modeling::VertexSelection selected_vertices = mesh.vertices().selected();
+		const VertexSelection selected_vertices = mesh.vertices().selected();
 		snapshot.selected_vertices.assign(selected_vertices.vertices().begin(), selected_vertices.vertices().end());
-		const quader::modeling::EdgeSelection selected_edges = mesh.edges().selected();
+		const EdgeSelection selected_edges = mesh.edges().selected();
 		snapshot.selected_edges.assign(selected_edges.edges().begin(), selected_edges.edges().end());
-		const quader::modeling::FaceSelection selected_faces = mesh.faces().selected();
+		const FaceSelection selected_faces = mesh.faces().selected();
 		snapshot.selected_faces.assign(selected_faces.faces().begin(), selected_faces.faces().end());
 		snapshots.push_back(std::move(snapshot));
 	}
 	return snapshots;
 }
 
-std::vector<quader::modeling::ObjectId> QuaderModelingAdapter::selected_objects() {
+std::vector<ObjectId> QuaderModelingAdapter::selected_objects() {
 	return api_.selection().summary().objects;
 }
 
-quader::modeling::ObjectId QuaderModelingAdapter::active_object() const {
+ObjectId QuaderModelingAdapter::active_object() const {
 	return active_object_;
 }
 
-quader::modeling::SelectionSummary QuaderModelingAdapter::selection_summary() {
+SelectionSummary QuaderModelingAdapter::selection_summary() {
 	return api_.selection().summary();
 }
 
-quader::modeling::OperationReceipt QuaderModelingAdapter::clear_selection() {
+OperationReceipt QuaderModelingAdapter::clear_selection() {
 	clear_mesh_selection_tracking();
 	active_object_ = {};
 	return api_.selection().clear();
 }
 
-quader::modeling::OperationReceipt QuaderModelingAdapter::activate_component_source(quader::modeling::ObjectId object) {
+OperationReceipt QuaderModelingAdapter::activate_component_source(ObjectId object) {
 	static_cast<void>(api_.selection().clear());
 	clear_mesh_selection_tracking();
-	std::vector<quader::modeling::ObjectId> objects{object};
-	const quader::modeling::OperationReceipt receipt = api_.meshes().only(objects).add();
+	std::vector<ObjectId> objects{object};
+	const OperationReceipt receipt = api_.meshes().only(objects).add();
 	if (receipt.success) {
 		active_object_ = object;
 	}
 	return receipt;
 }
 
-quader::modeling::OperationReceipt QuaderModelingAdapter::create_box_from_bounds(quader::modeling::Vec3 min,
-		quader::modeling::Vec3 max, std::string name) {
-	quader::modeling::Result<quader::modeling::MeshHandle> created = api_.checked().create_box({
+OperationReceipt QuaderModelingAdapter::create_box_from_bounds(Vec3 min,
+		Vec3 max, std::string name) {
+	Result<MeshHandle> created = api_.checked().create_box({
 			.name = std::move(name),
 			.min = min,
 			.max = max,
 	});
 	if (!created.ok()) {
-		quader::modeling::OperationReceipt receipt;
+		OperationReceipt receipt;
 		receipt.success = false;
 		receipt.error = created.error();
 		return receipt;
 	}
 
-	const quader::modeling::ObjectId object = created.value().id();
-	std::vector<quader::modeling::ObjectId> objects{object};
-	quader::modeling::OperationReceipt receipt = api_.meshes().only(objects).replace();
+	const ObjectId object = created.value().id();
+	std::vector<ObjectId> objects{object};
+	OperationReceipt receipt = api_.meshes().only(objects).replace();
 	if (receipt.success) {
 		mesh_selection_ = objects;
 		active_object_ = object;
@@ -127,29 +140,29 @@ quader::modeling::OperationReceipt QuaderModelingAdapter::create_box_from_bounds
 	return receipt;
 }
 
-quader::modeling::OperationReceipt QuaderModelingAdapter::create_box_from_corners(
-		std::span<const quader::modeling::Vec3> corners, std::string name) {
-	quader::modeling::Result<quader::modeling::PolygonDocument> document =
-			quader::modeling::PolygonDocument::make_box_from_corners(corners);
+OperationReceipt QuaderModelingAdapter::create_box_from_corners(
+		std::span<const Vec3> corners, std::string name) {
+	Result<PolygonDocument> document =
+			PolygonDocument::make_box_from_corners(corners);
 	if (!document.ok()) {
-		quader::modeling::OperationReceipt receipt;
+		OperationReceipt receipt;
 		receipt.success = false;
 		receipt.error = document.error();
 		return receipt;
 	}
 
-	quader::modeling::Result<quader::modeling::MeshHandle> created =
+	Result<MeshHandle> created =
 			api_.checked().add_document(std::move(document).value(), std::move(name));
 	if (!created.ok()) {
-		quader::modeling::OperationReceipt receipt;
+		OperationReceipt receipt;
 		receipt.success = false;
 		receipt.error = created.error();
 		return receipt;
 	}
 
-	const quader::modeling::ObjectId object = created.value().id();
-	std::vector<quader::modeling::ObjectId> objects{object};
-	quader::modeling::OperationReceipt receipt = api_.meshes().only(objects).replace();
+	const ObjectId object = created.value().id();
+	std::vector<ObjectId> objects{object};
+	OperationReceipt receipt = api_.meshes().only(objects).replace();
 	if (receipt.success) {
 		mesh_selection_ = objects;
 		active_object_ = object;
@@ -162,77 +175,77 @@ quader::modeling::OperationReceipt QuaderModelingAdapter::create_box_from_corner
 	return receipt;
 }
 
-quader::modeling::OperationReceipt QuaderModelingAdapter::apply_selection(const SelectionTarget &target,
-		quader::modeling::SelectionEdit edit) {
-	if (target.kind == quader::modeling::SelectionKind::Object) {
-		std::vector<quader::modeling::ObjectId> objects;
+OperationReceipt QuaderModelingAdapter::apply_selection(const SelectionTarget &target,
+		SelectionEdit edit) {
+	if (target.kind == SelectionKind::Object) {
+		std::vector<ObjectId> objects;
 		if (target.object.valid()) {
 			objects.push_back(target.object);
 		}
-		if (edit == quader::modeling::SelectionEdit::Replace) {
+		if (edit == SelectionEdit::Replace) {
 			static_cast<void>(clear_selection());
-			edit = quader::modeling::SelectionEdit::Add;
+			edit = SelectionEdit::Add;
 		}
-		const quader::modeling::OperationReceipt receipt = api_.meshes().only(objects).apply(edit);
+		const OperationReceipt receipt = api_.meshes().only(objects).apply(edit);
 		if (receipt.success) {
 			apply_mesh_selection_tracking(objects, edit);
-			if (!objects.empty() && edit == quader::modeling::SelectionEdit::Toggle) {
-				active_object_ = mesh_selection_tracked(target.object) ? target.object : quader::modeling::ObjectId{};
+			if (!objects.empty() && edit == SelectionEdit::Toggle) {
+				active_object_ = mesh_selection_tracked(target.object) ? target.object : ObjectId{};
 				if (!active_object_.valid()) {
 					set_active_from_mesh_selection();
 				}
-			} else if (!objects.empty() && edit != quader::modeling::SelectionEdit::Remove) {
+			} else if (!objects.empty() && edit != SelectionEdit::Remove) {
 				active_object_ = objects.front();
-			} else if (edit == quader::modeling::SelectionEdit::Remove && active_object_ == target.object) {
+			} else if (edit == SelectionEdit::Remove && active_object_ == target.object) {
 				set_active_from_mesh_selection();
 			}
 		}
 		return receipt;
 	}
 
-	const std::vector<quader::modeling::ObjectId> selected_before = api_.selection().summary().objects;
+	const std::vector<ObjectId> selected_before = api_.selection().summary().objects;
 	const bool was_edit_target = active_object_ == target.object ||
 			std::find(selected_before.begin(), selected_before.end(), target.object) != selected_before.end();
 
-	if (edit == quader::modeling::SelectionEdit::Replace) {
+	if (edit == SelectionEdit::Replace) {
 		static_cast<void>(clear_selection());
-		std::vector<quader::modeling::ObjectId> objects{target.object};
+		std::vector<ObjectId> objects{target.object};
 		static_cast<void>(api_.meshes().only(objects).add());
 		clear_mesh_selection_tracking();
 		active_object_ = target.object;
-	} else if (edit == quader::modeling::SelectionEdit::Add) {
-		std::vector<quader::modeling::ObjectId> objects{target.object};
+	} else if (edit == SelectionEdit::Add) {
+		std::vector<ObjectId> objects{target.object};
 		static_cast<void>(api_.meshes().only(objects).add());
 		active_object_ = target.object;
-	} else if (edit == quader::modeling::SelectionEdit::Toggle) {
+	} else if (edit == SelectionEdit::Toggle) {
 		active_object_ = target.object;
 	}
 
-	quader::modeling::OperationReceipt receipt;
-	if (target.kind == quader::modeling::SelectionKind::Vertex) {
-		std::vector<quader::modeling::VertexId> vertices{target.vertex};
+	OperationReceipt receipt;
+	if (target.kind == SelectionKind::Vertex) {
+		std::vector<VertexId> vertices{target.vertex};
 		receipt = api_.mesh(target.object).vertices().only(vertices).apply(edit);
-	} else if (target.kind == quader::modeling::SelectionKind::Edge) {
-		std::vector<quader::modeling::EdgeKey> edges{target.edge};
+	} else if (target.kind == SelectionKind::Edge) {
+		std::vector<EdgeKey> edges{target.edge};
 		receipt = api_.mesh(target.object).edges().only(edges).apply(edit);
 	} else {
-		std::vector<quader::modeling::FaceId> faces{target.face};
+		std::vector<FaceId> faces{target.face};
 		receipt = api_.mesh(target.object).faces().only(faces).apply(edit);
 	}
 
-	if (receipt.success && edit == quader::modeling::SelectionEdit::Remove && was_edit_target) {
+	if (receipt.success && edit == SelectionEdit::Remove && was_edit_target) {
 		bool selection_empty = true;
-		quader::modeling::MeshHandle mesh = api_.mesh(target.object);
-		if (target.kind == quader::modeling::SelectionKind::Vertex) {
+		MeshHandle mesh = api_.mesh(target.object);
+		if (target.kind == SelectionKind::Vertex) {
 			selection_empty = mesh.vertices().selected().empty();
-		} else if (target.kind == quader::modeling::SelectionKind::Edge) {
+		} else if (target.kind == SelectionKind::Edge) {
 			selection_empty = mesh.edges().selected().empty();
-		} else if (target.kind == quader::modeling::SelectionKind::Face) {
+		} else if (target.kind == SelectionKind::Face) {
 			selection_empty = mesh.faces().selected().empty();
 		}
 		if (selection_empty) {
-			std::vector<quader::modeling::ObjectId> objects{target.object};
-			const quader::modeling::OperationReceipt keep_target = api_.meshes().only(objects).add();
+			std::vector<ObjectId> objects{target.object};
+			const OperationReceipt keep_target = api_.meshes().only(objects).add();
 			if (keep_target.success) {
 				active_object_ = target.object;
 				receipt.changed = receipt.changed || keep_target.changed;
@@ -245,9 +258,9 @@ quader::modeling::OperationReceipt QuaderModelingAdapter::apply_selection(const 
 	return receipt;
 }
 
-quader::modeling::OperationReceipt QuaderModelingAdapter::flip_selected_mesh_normals() {
-	quader::modeling::OperationReceipt receipt;
-	for (const quader::modeling::ObjectId object : mesh_selection_) {
+OperationReceipt QuaderModelingAdapter::flip_selected_mesh_normals() {
+	OperationReceipt receipt;
+	for (const ObjectId object : mesh_selection_) {
 		receipt = api_.mesh(object).faces().all().flip_normals();
 		if (!receipt.success) {
 			return receipt;
@@ -256,39 +269,39 @@ quader::modeling::OperationReceipt QuaderModelingAdapter::flip_selected_mesh_nor
 	return receipt;
 }
 
-quader::modeling::OperationReceipt QuaderModelingAdapter::translate_selected_meshes(quader::modeling::Vec3 delta) {
-	return transform_selected_meshes([&](quader::modeling::MeshHandle mesh) { return mesh.transform().translate(delta); });
+OperationReceipt QuaderModelingAdapter::translate_selected_meshes(Vec3 delta) {
+	return transform_selected_meshes([&](MeshHandle mesh) { return mesh.transform().translate(delta); });
 }
 
-quader::modeling::OperationReceipt QuaderModelingAdapter::rotate_selected_meshes(quader::modeling::Vec3 radians,
-		quader::modeling::Vec3 pivot) {
+OperationReceipt QuaderModelingAdapter::rotate_selected_meshes(Vec3 radians,
+		Vec3 pivot) {
 	return transform_selected_meshes(
-			[&](quader::modeling::MeshHandle mesh) { return mesh.transform().rotate({.radians = radians, .pivot = pivot}); });
+			[&](MeshHandle mesh) { return mesh.transform().rotate({.radians = radians, .pivot = pivot}); });
 }
 
-quader::modeling::OperationReceipt QuaderModelingAdapter::scale_selected_meshes(quader::modeling::Vec3 scale,
-		quader::modeling::Vec3 pivot) {
+OperationReceipt QuaderModelingAdapter::scale_selected_meshes(Vec3 scale,
+		Vec3 pivot) {
 	return transform_selected_meshes(
-			[&](quader::modeling::MeshHandle mesh) { return mesh.transform().scale({.scale = scale, .pivot = pivot}); });
+			[&](MeshHandle mesh) { return mesh.transform().scale({.scale = scale, .pivot = pivot}); });
 }
 
-quader::modeling::OperationReceipt QuaderModelingAdapter::transform_selected_meshes(
-		const std::function<quader::modeling::OperationReceipt(quader::modeling::MeshHandle)> &operation) {
-	quader::modeling::OperationReceipt merged;
+OperationReceipt QuaderModelingAdapter::transform_selected_meshes(
+		const std::function<OperationReceipt(MeshHandle)> &operation) {
+	OperationReceipt merged;
 	if (mesh_selection_.empty()) {
 		merged.success = false;
-		merged.error = quader::modeling::make_error(quader::modeling::ErrorCode::InvalidArgument, "No selected mesh.");
+		merged.error = make_error(ErrorCode::InvalidArgument, "No selected mesh.");
 		return merged;
 	}
 
-	for (const quader::modeling::ObjectId object : mesh_selection_) {
-		quader::modeling::MeshHandle mesh = api_.mesh(object);
-		quader::modeling::OperationReceipt receipt = operation(mesh);
+	for (const ObjectId object : mesh_selection_) {
+		MeshHandle mesh = api_.mesh(object);
+		OperationReceipt receipt = operation(mesh);
 		if (!receipt.success) {
 			return receipt;
 		}
 		if (receipt.changed) {
-			static_cast<void>(mesh.faces().only(std::span<const quader::modeling::FaceId>{}).replace());
+			static_cast<void>(mesh.faces().only(std::span<const FaceId>{}).replace());
 		}
 		merged.changed = merged.changed || receipt.changed;
 		merged.revisions = receipt.revisions;
@@ -301,22 +314,22 @@ quader::modeling::OperationReceipt QuaderModelingAdapter::transform_selected_mes
 	return merged;
 }
 
-void QuaderModelingAdapter::apply_mesh_selection_tracking(std::span<const quader::modeling::ObjectId> objects,
-		quader::modeling::SelectionEdit edit) {
-	if (edit == quader::modeling::SelectionEdit::Replace) {
+void QuaderModelingAdapter::apply_mesh_selection_tracking(std::span<const ObjectId> objects,
+		SelectionEdit edit) {
+	if (edit == SelectionEdit::Replace) {
 		mesh_selection_.assign(objects.begin(), objects.end());
 		return;
 	}
 
-	for (const quader::modeling::ObjectId object : objects) {
+	for (const ObjectId object : objects) {
 		const auto found = std::find(mesh_selection_.begin(), mesh_selection_.end(), object);
-		if (edit == quader::modeling::SelectionEdit::Add) {
+		if (edit == SelectionEdit::Add) {
 			if (found == mesh_selection_.end()) {
 				mesh_selection_.push_back(object);
 			}
 			continue;
 		}
-		if (edit == quader::modeling::SelectionEdit::Remove) {
+		if (edit == SelectionEdit::Remove) {
 			if (found != mesh_selection_.end()) {
 				mesh_selection_.erase(found);
 			}
@@ -335,10 +348,10 @@ void QuaderModelingAdapter::clear_mesh_selection_tracking() {
 }
 
 void QuaderModelingAdapter::set_active_from_mesh_selection() {
-	active_object_ = mesh_selection_.empty() ? quader::modeling::ObjectId{} : mesh_selection_.back();
+	active_object_ = mesh_selection_.empty() ? ObjectId{} : mesh_selection_.back();
 }
 
-bool QuaderModelingAdapter::mesh_selection_tracked(quader::modeling::ObjectId object) const {
+bool QuaderModelingAdapter::mesh_selection_tracked(ObjectId object) const {
 	return std::find(mesh_selection_.begin(), mesh_selection_.end(), object) != mesh_selection_.end();
 }
 

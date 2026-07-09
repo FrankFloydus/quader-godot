@@ -28,11 +28,15 @@ Godot source when renderer or GDExtension behavior is unclear.
 
 ## Repository Layout
 
-- `src/editor`: Godot editor plugin host/window code, top bar, settings UI, and addon integration.
-- `src/viewport`: Quader viewport control, camera navigation, input handling, picking, selection,
-  transform actions, and runtime viewport orchestration.
-- `src/render`: Godot render helpers for grid, material, overlays, transform gizmo, and viewport
-  visual settings.
+- `src/editor`: Godot editor plugin host/window code and addon integration. Editor window classes
+  compose UI and viewport owners; they should not own widget construction or settings
+  serialization.
+- `src/ui`: Small Godot UI factories and controls such as the Quader top bar and viewport settings
+  window.
+- `src/settings`: Persistent plugin settings stores and migration logic.
+- `src/viewport`: Quader viewport control, visual settings, camera navigation, input handling,
+  picking, selection, transform actions, and runtime viewport orchestration.
+- `src/render`: Godot render helpers for grid, material, overlays, and transform gizmo rendering.
 - `src/modeling`: Adapter between the plugin and the copied Quader modeling SDK.
 - `src/quader_modeling_sdk`: Copied portable Quader modeling SDK. Read
   `src/quader_modeling_sdk/AGENTS.md` before editing this subtree.

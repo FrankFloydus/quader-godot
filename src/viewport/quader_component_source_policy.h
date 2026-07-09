@@ -9,8 +9,10 @@
 
 namespace quader_godot::viewport {
 
+using quader::modeling::ObjectId;
+
 struct ComponentSourceObjectState {
-	quader::modeling::ObjectId object;
+	ObjectId object;
 	bool selected = false;
 	bool active = false;
 	bool has_selected_vertices = false;
@@ -18,28 +20,28 @@ struct ComponentSourceObjectState {
 	bool has_selected_faces = false;
 };
 
-[[nodiscard]] quader::modeling::ObjectId primary_component_source_object(
+[[nodiscard]] ObjectId primary_component_source_object(
 		std::span<const ComponentSourceObjectState> objects, SelectionMode mode,
-		quader::modeling::ObjectId candidate);
+		ObjectId candidate);
 
-[[nodiscard]] std::vector<quader::modeling::ObjectId> component_source_wire_objects(
+[[nodiscard]] std::vector<ObjectId> component_source_wire_objects(
 		std::span<const ComponentSourceObjectState> objects, SelectionMode mode,
-		quader::modeling::ObjectId candidate);
+		ObjectId candidate);
 
-[[nodiscard]] std::vector<quader::modeling::ObjectId> component_vertex_handle_objects(
+[[nodiscard]] std::vector<ObjectId> component_vertex_handle_objects(
 		std::span<const ComponentSourceObjectState> objects, SelectionMode mode,
-		quader::modeling::ObjectId candidate);
+		ObjectId candidate);
 
-[[nodiscard]] quader::modeling::ObjectId component_hover_candidate(
-		SelectionMode mode, quader::modeling::ObjectId current_candidate,
-		quader::modeling::ObjectId surface_object);
+[[nodiscard]] ObjectId component_hover_candidate(
+		SelectionMode mode, ObjectId current_candidate,
+		ObjectId surface_object);
 
-[[nodiscard]] std::vector<quader::modeling::ObjectId> component_source_wire_objects_for_hover(
+[[nodiscard]] std::vector<ObjectId> component_source_wire_objects_for_hover(
 		std::span<const ComponentSourceObjectState> objects, SelectionMode mode,
-		quader::modeling::ObjectId current_candidate, quader::modeling::ObjectId surface_object);
+		ObjectId current_candidate, ObjectId surface_object);
 
 [[nodiscard]] bool component_source_candidate_draws_unselected_vertices(
 		std::span<const ComponentSourceObjectState> objects, SelectionMode mode,
-		quader::modeling::ObjectId candidate);
+		ObjectId candidate);
 
 } // namespace quader_godot::viewport

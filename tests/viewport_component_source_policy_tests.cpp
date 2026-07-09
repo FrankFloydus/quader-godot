@@ -7,17 +7,20 @@
 namespace quader_godot::viewport {
 namespace {
 
-quader::modeling::ObjectId object_id(std::uint32_t index) {
-	return quader::modeling::make_id<quader::modeling::ObjectTag>(index);
+using quader::modeling::ObjectTag;
+using quader::modeling::make_id;
+
+ObjectId object_id(std::uint32_t index) {
+	return make_id<ObjectTag>(index);
 }
 
-bool contains_object(const std::vector<quader::modeling::ObjectId> &objects, quader::modeling::ObjectId object) {
+bool contains_object(const std::vector<ObjectId> &objects, ObjectId object) {
 	return std::find(objects.begin(), objects.end(), object) != objects.end();
 }
 
 TEST(ComponentSourcePolicyTests, HoverCandidateKeepsSourceWireBesideSelectedVertexSource) {
-	const quader::modeling::ObjectId selected = object_id(1);
-	const quader::modeling::ObjectId hovered = object_id(2);
+	const ObjectId selected = object_id(1);
+	const ObjectId hovered = object_id(2);
 	const ComponentSourceObjectState objects[] = {
 			{
 					.object = selected,
@@ -30,7 +33,7 @@ TEST(ComponentSourcePolicyTests, HoverCandidateKeepsSourceWireBesideSelectedVert
 			},
 	};
 
-	const std::vector<quader::modeling::ObjectId> source_objects =
+	const std::vector<ObjectId> source_objects =
 			component_source_wire_objects(objects, SelectionMode::Vertex, hovered);
 
 	ASSERT_EQ(source_objects.size(), 2U);
@@ -40,8 +43,8 @@ TEST(ComponentSourcePolicyTests, HoverCandidateKeepsSourceWireBesideSelectedVert
 }
 
 TEST(ComponentSourcePolicyTests, VertexHandlesStayOnEverySelectedEditObject) {
-	const quader::modeling::ObjectId selected = object_id(1);
-	const quader::modeling::ObjectId hovered = object_id(2);
+	const ObjectId selected = object_id(1);
+	const ObjectId hovered = object_id(2);
 	const ComponentSourceObjectState objects[] = {
 			{
 					.object = selected,
@@ -54,9 +57,9 @@ TEST(ComponentSourcePolicyTests, VertexHandlesStayOnEverySelectedEditObject) {
 			},
 	};
 
-	const quader::modeling::ObjectId candidate =
+	const ObjectId candidate =
 			component_hover_candidate(SelectionMode::Vertex, selected, hovered);
-	const std::vector<quader::modeling::ObjectId> handle_objects =
+	const std::vector<ObjectId> handle_objects =
 			component_vertex_handle_objects(objects, SelectionMode::Vertex, candidate);
 
 	EXPECT_EQ(candidate, hovered);
@@ -66,8 +69,8 @@ TEST(ComponentSourcePolicyTests, VertexHandlesStayOnEverySelectedEditObject) {
 }
 
 TEST(ComponentSourcePolicyTests, StickySourceWireRequiresSelectedEditObject) {
-	const quader::modeling::ObjectId stale = object_id(1);
-	const quader::modeling::ObjectId hovered = object_id(2);
+	const ObjectId stale = object_id(1);
+	const ObjectId hovered = object_id(2);
 	const ComponentSourceObjectState objects[] = {
 			{
 					.object = stale,
@@ -80,7 +83,7 @@ TEST(ComponentSourcePolicyTests, StickySourceWireRequiresSelectedEditObject) {
 			},
 	};
 
-	const std::vector<quader::modeling::ObjectId> source_objects =
+	const std::vector<ObjectId> source_objects =
 			component_source_wire_objects(objects, SelectionMode::Vertex, hovered);
 
 	ASSERT_EQ(source_objects.size(), 1U);
@@ -88,8 +91,8 @@ TEST(ComponentSourcePolicyTests, StickySourceWireRequiresSelectedEditObject) {
 }
 
 TEST(ComponentSourcePolicyTests, SourceWireStaysOnEverySelectedComponentObject) {
-	const quader::modeling::ObjectId first = object_id(1);
-	const quader::modeling::ObjectId second = object_id(2);
+	const ObjectId first = object_id(1);
+	const ObjectId second = object_id(2);
 	const ComponentSourceObjectState objects[] = {
 			{
 					.object = first,
@@ -104,7 +107,7 @@ TEST(ComponentSourcePolicyTests, SourceWireStaysOnEverySelectedComponentObject) 
 			},
 	};
 
-	const std::vector<quader::modeling::ObjectId> source_objects =
+	const std::vector<ObjectId> source_objects =
 			component_source_wire_objects(objects, SelectionMode::Vertex, {});
 
 	ASSERT_EQ(source_objects.size(), 2U);
@@ -113,8 +116,8 @@ TEST(ComponentSourcePolicyTests, SourceWireStaysOnEverySelectedComponentObject) 
 }
 
 TEST(ComponentSourcePolicyTests, SourceWireSurvivesComponentModeChange) {
-	const quader::modeling::ObjectId first = object_id(1);
-	const quader::modeling::ObjectId second = object_id(2);
+	const ObjectId first = object_id(1);
+	const ObjectId second = object_id(2);
 	const ComponentSourceObjectState objects[] = {
 			{
 					.object = first,
@@ -129,7 +132,7 @@ TEST(ComponentSourcePolicyTests, SourceWireSurvivesComponentModeChange) {
 			},
 	};
 
-	const std::vector<quader::modeling::ObjectId> edge_sources =
+	const std::vector<ObjectId> edge_sources =
 			component_source_wire_objects(objects, SelectionMode::Edge, {});
 
 	ASSERT_EQ(edge_sources.size(), 2U);
@@ -138,8 +141,8 @@ TEST(ComponentSourcePolicyTests, SourceWireSurvivesComponentModeChange) {
 }
 
 TEST(ComponentSourcePolicyTests, VertexHandlesDoNotLeakToSelectedObjectsWithoutModeComponents) {
-	const quader::modeling::ObjectId selected_with_vertex = object_id(1);
-	const quader::modeling::ObjectId selected_without_vertex = object_id(2);
+	const ObjectId selected_with_vertex = object_id(1);
+	const ObjectId selected_without_vertex = object_id(2);
 	const ComponentSourceObjectState objects[] = {
 			{
 					.object = selected_with_vertex,
@@ -153,7 +156,7 @@ TEST(ComponentSourcePolicyTests, VertexHandlesDoNotLeakToSelectedObjectsWithoutM
 			},
 	};
 
-	const std::vector<quader::modeling::ObjectId> handle_objects =
+	const std::vector<ObjectId> handle_objects =
 			component_vertex_handle_objects(objects, SelectionMode::Vertex, {});
 
 	ASSERT_EQ(handle_objects.size(), 1U);
@@ -161,8 +164,8 @@ TEST(ComponentSourcePolicyTests, VertexHandlesDoNotLeakToSelectedObjectsWithoutM
 }
 
 TEST(ComponentSourcePolicyTests, HoverCandidateShowsVerticesEvenWhenObjectSelectedWithoutVertexComponents) {
-	const quader::modeling::ObjectId selected_with_vertex = object_id(1);
-	const quader::modeling::ObjectId hovered_object_selected = object_id(2);
+	const ObjectId selected_with_vertex = object_id(1);
+	const ObjectId hovered_object_selected = object_id(2);
 	const ComponentSourceObjectState objects[] = {
 			{
 					.object = selected_with_vertex,
@@ -175,7 +178,7 @@ TEST(ComponentSourcePolicyTests, HoverCandidateShowsVerticesEvenWhenObjectSelect
 			},
 	};
 
-	const std::vector<quader::modeling::ObjectId> handle_objects =
+	const std::vector<ObjectId> handle_objects =
 			component_vertex_handle_objects(objects, SelectionMode::Vertex, hovered_object_selected);
 
 	ASSERT_EQ(handle_objects.size(), 2U);
@@ -186,8 +189,8 @@ TEST(ComponentSourcePolicyTests, HoverCandidateShowsVerticesEvenWhenObjectSelect
 }
 
 TEST(ComponentSourcePolicyTests, VertexHandlesUseOnlyActiveFallbackBeforeComponentSelection) {
-	const quader::modeling::ObjectId inactive_selected = object_id(1);
-	const quader::modeling::ObjectId active_selected = object_id(2);
+	const ObjectId inactive_selected = object_id(1);
+	const ObjectId active_selected = object_id(2);
 	const ComponentSourceObjectState objects[] = {
 			{
 					.object = inactive_selected,
@@ -200,7 +203,7 @@ TEST(ComponentSourcePolicyTests, VertexHandlesUseOnlyActiveFallbackBeforeCompone
 			},
 	};
 
-	const std::vector<quader::modeling::ObjectId> handle_objects =
+	const std::vector<ObjectId> handle_objects =
 			component_vertex_handle_objects(objects, SelectionMode::Vertex, {});
 
 	ASSERT_EQ(handle_objects.size(), 1U);
@@ -208,8 +211,8 @@ TEST(ComponentSourcePolicyTests, VertexHandlesUseOnlyActiveFallbackBeforeCompone
 }
 
 TEST(ComponentSourcePolicyTests, HoverCandidateReplacesFallbackActiveOnlyWhenActiveHasNoComponents) {
-	const quader::modeling::ObjectId active = object_id(1);
-	const quader::modeling::ObjectId hovered = object_id(2);
+	const ObjectId active = object_id(1);
+	const ObjectId hovered = object_id(2);
 	const ComponentSourceObjectState objects[] = {
 			{
 					.object = active,
@@ -221,7 +224,7 @@ TEST(ComponentSourcePolicyTests, HoverCandidateReplacesFallbackActiveOnlyWhenAct
 			},
 	};
 
-	const std::vector<quader::modeling::ObjectId> source_objects =
+	const std::vector<ObjectId> source_objects =
 			component_source_wire_objects(objects, SelectionMode::Vertex, hovered);
 
 	ASSERT_EQ(source_objects.size(), 1U);
@@ -229,8 +232,8 @@ TEST(ComponentSourcePolicyTests, HoverCandidateReplacesFallbackActiveOnlyWhenAct
 }
 
 TEST(ComponentSourcePolicyTests, SourceWireKeepsFaceSelectionAcrossModesWithoutVertexHandles) {
-	const quader::modeling::ObjectId selected = object_id(1);
-	const quader::modeling::ObjectId hovered = object_id(2);
+	const ObjectId selected = object_id(1);
+	const ObjectId hovered = object_id(2);
 	const ComponentSourceObjectState objects[] = {
 			{
 					.object = selected,
@@ -243,17 +246,17 @@ TEST(ComponentSourcePolicyTests, SourceWireKeepsFaceSelectionAcrossModesWithoutV
 			},
 	};
 
-	const std::vector<quader::modeling::ObjectId> vertex_sources =
+	const std::vector<ObjectId> vertex_sources =
 			component_source_wire_objects(objects, SelectionMode::Vertex, hovered);
 	ASSERT_EQ(vertex_sources.size(), 2U);
 	EXPECT_TRUE(contains_object(vertex_sources, selected));
 	EXPECT_TRUE(contains_object(vertex_sources, hovered));
 
-	const std::vector<quader::modeling::ObjectId> vertex_handles =
+	const std::vector<ObjectId> vertex_handles =
 			component_vertex_handle_objects(objects, SelectionMode::Vertex, {});
 	EXPECT_TRUE(vertex_handles.empty());
 
-	const std::vector<quader::modeling::ObjectId> face_sources =
+	const std::vector<ObjectId> face_sources =
 			component_source_wire_objects(objects, SelectionMode::Face, hovered);
 	ASSERT_EQ(face_sources.size(), 2U);
 	EXPECT_TRUE(contains_object(face_sources, selected));

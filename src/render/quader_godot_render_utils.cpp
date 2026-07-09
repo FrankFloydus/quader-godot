@@ -14,29 +14,19 @@
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
+#include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/string_name.hpp>
 
 #include <algorithm>
-#include <cstdint>
 
 namespace quader_godot::render {
 namespace {
 
-constexpr float kGridPlaneSize = 4096.0f;
+using quader::modeling::MeshVertexPayload;
+
+constexpr float kGridPlaneSize = 8092.0f;
 constexpr float kParentGridWorldSize = 2.0f;
 constexpr float kMeshSurfaceMajorGridMultiplier = 4.0f;
-
-godot::Color rgba8(int red, int green, int blue, int alpha = 255) {
-	return {static_cast<float>(red) / 255.0f, static_cast<float>(green) / 255.0f,
-			static_cast<float>(blue) / 255.0f, static_cast<float>(alpha) / 255.0f};
-}
-
-godot::Color abgr8(std::uint32_t abgr) {
-	return {static_cast<float>(abgr & 0xffU) / 255.0f,
-			static_cast<float>((abgr >> 8U) & 0xffU) / 255.0f,
-			static_cast<float>((abgr >> 16U) & 0xffU) / 255.0f,
-			static_cast<float>((abgr >> 24U) & 0xffU) / 255.0f};
-}
 
 godot::String ground_grid_shader_code() {
 	return R"(
@@ -212,48 +202,6 @@ void fragment() {
 
 } // namespace
 
-ViewportVisualSettings default_viewport_visual_settings() {
-	return {
-			.grid_minor_color = rgba8(255, 255, 255, 0x16),
-			.grid_major_color = rgba8(255, 255, 255, 0x2e),
-			.grid_x_axis_color = godot::Color::html("ff0000"),
-			.grid_z_axis_color = godot::Color::html("006cff"),
-			.mesh_grid_minor_color = rgba8(255, 255, 255, 0x0a),
-			.mesh_grid_major_color = rgba8(255, 255, 255, 0x15),
-			.background_color = rgba8(0x15, 0x15, 0x15),
-			.selection_face_color = abgr8(0x081facffU),
-			.selection_wire_color = abgr8(0xff1fd3ffU),
-			.source_wire_color = abgr8(0xebffe05cU),
-			.open_edge_color = abgr8(0xff00ffffU),
-			.diagnostic_edge_color = abgr8(0xff0000ffU),
-			.hover_face_color = abgr8(0x161fff66U),
-			.hover_wire_color = abgr8(0xff00ff51U),
-			.remove_face_color = abgr8(0x52ff6b1fU),
-			.remove_wire_color = abgr8(0xffff6b1fU),
-			.vertex_color = abgr8(0xffffe66bU),
-			.selected_vertex_color = abgr8(0xff1fadffU),
-			.hover_vertex_color = abgr8(0xff38ff00U),
-			.remove_vertex_color = abgr8(0xffff6b1fU),
-			.vertex_outline_color = abgr8(0xe6000000U),
-			.grid_world_size = 1.0f,
-			.minor_line_size = 0.25f,
-			.major_line_size = 0.25f,
-			.axis_line_size = 1.0f,
-			.source_wire_line_size = 1.0f,
-			.selection_face_wire_line_size = 1.0f,
-			.selection_edge_line_size = 2.0f,
-			.hover_wire_line_size = 2.0f,
-			.open_edge_line_size = 1.0f,
-			.diagnostic_edge_line_size = 4.0f,
-			.vertex_size = 10.0f,
-			.selected_vertex_growth = 1.0f,
-			.hover_vertex_growth = 1.0f,
-			.vertex_outline_size = 1.0f,
-			.pick_vertex_radius = 0.07f,
-			.pick_edge_radius = 0.07f,
-	};
-}
-
 godot::Ref<godot::Texture2D> load_texture(const godot::String &path) {
 	godot::Ref<godot::Texture2D> texture;
 	godot::ResourceLoader *loader = godot::ResourceLoader::get_singleton();
@@ -277,7 +225,7 @@ godot::Ref<godot::ArrayMesh> make_array_mesh(const modeling::MeshPayload &payloa
 	godot::PackedVector3Array vertices;
 	godot::PackedVector3Array normals;
 	godot::PackedVector2Array uvs;
-	for (const quader::modeling::MeshVertexPayload &vertex : payload.vertices) {
+	for (const MeshVertexPayload &vertex : payload.vertices) {
 		vertices.push_back({vertex.position.x, vertex.position.y, vertex.position.z});
 		normals.push_back({vertex.normal.x, vertex.normal.y, vertex.normal.z});
 		uvs.push_back({vertex.uv0.x, vertex.uv0.y});
@@ -304,10 +252,10 @@ godot::Ref<godot::ArrayMesh> make_array_mesh(const modeling::MeshPayload &payloa
 }
 
 godot::Ref<godot::ShaderMaterial> make_default_quader_material() {
-	return make_default_quader_material(default_viewport_visual_settings());
+	return make_default_quader_material(viewport::default_viewport_visual_settings());
 }
 
-godot::Ref<godot::ShaderMaterial> make_default_quader_material(const ViewportVisualSettings &settings) {
+godot::Ref<godot::ShaderMaterial> make_default_quader_material(const viewport::ViewportVisualSettings &settings) {
 	godot::Ref<godot::Shader> shader;
 	shader.instantiate();
 	shader->set_code(default_quader_mesh_shader_code());
@@ -322,11 +270,11 @@ godot::Ref<godot::ShaderMaterial> make_default_quader_material(const ViewportVis
 }
 
 void apply_default_quader_material_settings(const godot::Ref<godot::ShaderMaterial> &material,
-		const ViewportVisualSettings &settings) {
+		const viewport::ViewportVisualSettings &settings) {
 	if (material.is_null()) {
 		return;
 	}
-	material->set_shader_parameter("base_color_factor", godot::Color(1.0f, 1.0f, 1.0f, 1.0f));
+	material->set_shader_parameter("base_color_factor", godot::Color(godot::String("#ffffffff")));
 	material->set_shader_parameter("surface_grid_minor_color", settings.mesh_grid_minor_color);
 	material->set_shader_parameter("surface_grid_major_color", settings.mesh_grid_major_color);
 	const float spacing = std::max(settings.grid_world_size, 0.0001f);
@@ -339,10 +287,10 @@ void apply_default_quader_material_settings(const godot::Ref<godot::ShaderMateri
 }
 
 godot::Ref<godot::ShaderMaterial> make_ground_grid_material() {
-	return make_ground_grid_material(default_viewport_visual_settings());
+	return make_ground_grid_material(viewport::default_viewport_visual_settings());
 }
 
-godot::Ref<godot::ShaderMaterial> make_ground_grid_material(const ViewportVisualSettings &settings) {
+godot::Ref<godot::ShaderMaterial> make_ground_grid_material(const viewport::ViewportVisualSettings &settings) {
 	godot::Ref<godot::Shader> shader;
 	shader.instantiate();
 	shader->set_code(ground_grid_shader_code());
@@ -355,7 +303,7 @@ godot::Ref<godot::ShaderMaterial> make_ground_grid_material(const ViewportVisual
 }
 
 void apply_ground_grid_settings(const godot::Ref<godot::ShaderMaterial> &material,
-		const ViewportVisualSettings &settings) {
+		const viewport::ViewportVisualSettings &settings) {
 	if (material.is_null()) {
 		return;
 	}
@@ -388,10 +336,10 @@ godot::MeshInstance3D *make_ground_grid(const godot::Ref<godot::ShaderMaterial> 
 }
 
 godot::Ref<godot::Environment> make_environment() {
-	return make_environment(default_viewport_visual_settings());
+	return make_environment(viewport::default_viewport_visual_settings());
 }
 
-godot::Ref<godot::Environment> make_environment(const ViewportVisualSettings &settings) {
+godot::Ref<godot::Environment> make_environment(const viewport::ViewportVisualSettings &settings) {
 	godot::Ref<godot::Environment> environment;
 	environment.instantiate();
 	apply_environment_settings(environment, settings);
@@ -399,7 +347,7 @@ godot::Ref<godot::Environment> make_environment(const ViewportVisualSettings &se
 }
 
 void apply_environment_settings(const godot::Ref<godot::Environment> &environment,
-		const ViewportVisualSettings &settings) {
+		const viewport::ViewportVisualSettings &settings) {
 	if (environment.is_null()) {
 		return;
 	}

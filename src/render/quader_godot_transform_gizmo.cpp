@@ -44,21 +44,17 @@ constexpr float kTransformGizmoAxisLineWidthPixels = 1.6f;
 constexpr int kConeSegments = 16;
 constexpr int kRingSegments = 64;
 
-constexpr std::uint32_t rgba8(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a = 255U) {
-	return static_cast<std::uint32_t>(r) | (static_cast<std::uint32_t>(g) << 8U) |
-			(static_cast<std::uint32_t>(b) << 16U) | (static_cast<std::uint32_t>(a) << 24U);
-}
-
-constexpr std::uint32_t kAxisXColor = rgba8(245, 51, 82, 230);
-constexpr std::uint32_t kAxisYColor = rgba8(135, 214, 3, 230);
-constexpr std::uint32_t kAxisZColor = rgba8(41, 140, 245, 230);
-constexpr std::uint32_t kAxisMixedColor = rgba8(238, 242, 247, 230);
-constexpr std::uint32_t kAxisXHighlightColor = rgba8(255, 204, 211, 255);
-constexpr std::uint32_t kAxisYHighlightColor = rgba8(230, 255, 192, 255);
-constexpr std::uint32_t kAxisZHighlightColor = rgba8(202, 228, 255, 255);
-constexpr std::uint32_t kAxisHighlightColor = rgba8(255, 250, 204, 255);
-constexpr std::uint32_t kTrackballColor = rgba8(210, 214, 219, 138);
-constexpr std::uint32_t kScaleCenterOutlineColor = rgba8(255, 246, 128, 180);
+constexpr char kAxisXColor[] = "#f53352e6";
+constexpr char kAxisYColor[] = "#87d603e6";
+constexpr char kAxisZColor[] = "#298cf5e6";
+constexpr char kAxisMixedColor[] = "#eef2f7e6";
+constexpr char kAxisXHighlightColor[] = "#ffccd3ff";
+constexpr char kAxisYHighlightColor[] = "#e6ffc0ff";
+constexpr char kAxisZHighlightColor[] = "#cae4ffff";
+constexpr char kAxisHighlightColor[] = "#fffaccff";
+constexpr char kTrackballColor[] = "#d2d6db8a";
+constexpr char kScaleCenterOutlineColor[] = "#fff680b4";
+constexpr char kWhiteColor[] = "#ffffffff";
 
 struct GizmoAxisPrimitive {
 	TransformGizmoAxis axis = TransformGizmoAxis::None;
@@ -179,65 +175,56 @@ godot::Vector3 fallback_perpendicular(godot::Vector3 axis) {
 	return side.length_squared() <= 0.000001f ? godot::Vector3{0.0f, 0.0f, 1.0f} : side.normalized();
 }
 
-godot::Color color_from_rgba8(std::uint32_t color) {
-	const float r = static_cast<float>(color & 0xffU) / 255.0f;
-	const float g = static_cast<float>((color >> 8U) & 0xffU) / 255.0f;
-	const float b = static_cast<float>((color >> 16U) & 0xffU) / 255.0f;
-	const float a = static_cast<float>((color >> 24U) & 0xffU) / 255.0f;
-	return {r, g, b, a};
+godot::Color html_color(const char *color) {
+	return godot::Color(godot::String(color));
 }
 
-std::uint8_t channel(std::uint32_t color, int shift) {
-	return static_cast<std::uint8_t>((color >> shift) & 0xffU);
+float scaled_channel(float value, float scale) {
+	return std::clamp(value * scale, 0.0f, 1.0f);
 }
 
-std::uint8_t scaled_byte(std::uint8_t value, float scale) {
-	return static_cast<std::uint8_t>(
-			std::clamp(std::lround(static_cast<float>(value) * scale), 0l, 255l));
+godot::Color multiply_color(godot::Color color, float rgb_scale, float alpha_scale = 1.0f) {
+	return {scaled_channel(color.r, rgb_scale), scaled_channel(color.g, rgb_scale),
+			scaled_channel(color.b, rgb_scale), scaled_channel(color.a, alpha_scale)};
 }
 
-std::uint32_t multiply_color(std::uint32_t color, float rgb_scale, float alpha_scale = 1.0f) {
-	return rgba8(scaled_byte(channel(color, 0), rgb_scale), scaled_byte(channel(color, 8), rgb_scale),
-			scaled_byte(channel(color, 16), rgb_scale), scaled_byte(channel(color, 24), alpha_scale));
-}
-
-std::uint32_t color_for_axis(TransformGizmoAxis axis) {
+godot::Color color_for_axis(TransformGizmoAxis axis) {
 	if (axis == TransformGizmoAxis::X) {
-		return kAxisXColor;
+		return html_color(kAxisXColor);
 	}
 	if (axis == TransformGizmoAxis::Y) {
-		return kAxisYColor;
+		return html_color(kAxisYColor);
 	}
 	if (axis == TransformGizmoAxis::Z) {
-		return kAxisZColor;
+		return html_color(kAxisZColor);
 	}
-	return kAxisMixedColor;
+	return html_color(kAxisMixedColor);
 }
 
-std::uint32_t color_for_plane(TransformGizmoAxis axis) {
+godot::Color color_for_plane(TransformGizmoAxis axis) {
 	if (axis == TransformGizmoAxis::XY) {
-		return kAxisZColor;
+		return html_color(kAxisZColor);
 	}
 	if (axis == TransformGizmoAxis::XZ) {
-		return kAxisYColor;
+		return html_color(kAxisYColor);
 	}
 	if (axis == TransformGizmoAxis::YZ) {
-		return kAxisXColor;
+		return html_color(kAxisXColor);
 	}
-	return rgba8(255, 255, 255, 255);
+	return html_color(kWhiteColor);
 }
 
-std::uint32_t highlight_color_for_axis(TransformGizmoAxis axis) {
+godot::Color highlight_color_for_axis(TransformGizmoAxis axis) {
 	if (axis == TransformGizmoAxis::X || axis == TransformGizmoAxis::YZ) {
-		return kAxisXHighlightColor;
+		return html_color(kAxisXHighlightColor);
 	}
 	if (axis == TransformGizmoAxis::Y || axis == TransformGizmoAxis::XZ) {
-		return kAxisYHighlightColor;
+		return html_color(kAxisYHighlightColor);
 	}
 	if (axis == TransformGizmoAxis::Z || axis == TransformGizmoAxis::XY) {
-		return kAxisZHighlightColor;
+		return html_color(kAxisZHighlightColor);
 	}
-	return kAxisHighlightColor;
+	return html_color(kAxisHighlightColor);
 }
 
 bool axis_matches(TransformGizmoAxis expected, TransformGizmoAxis actual) {
@@ -248,7 +235,7 @@ bool highlighted(const GizmoFrame &frame, TransformGizmoAxis axis) {
 	return axis_matches(frame.active_axis, axis) || axis_matches(frame.hover_axis, axis);
 }
 
-std::uint32_t authored_axis_color(const GizmoFrame &frame, TransformGizmoAxis axis, float alpha = 1.0f) {
+godot::Color authored_axis_color(const GizmoFrame &frame, TransformGizmoAxis axis, float alpha = 1.0f) {
 	return highlighted(frame, axis) ? highlight_color_for_axis(axis) : multiply_color(color_for_axis(axis), 1.0f, alpha);
 }
 
@@ -547,33 +534,33 @@ TransformGizmoPickHit pick_rotate_axis(godot::Vector2 screen_position, const Giz
 	return hit;
 }
 
-void append_line(GizmoMeshBuilder &builder, godot::Vector3 a, godot::Vector3 b, std::uint32_t color,
+void append_line(GizmoMeshBuilder &builder, godot::Vector3 a, godot::Vector3 b, godot::Color color,
 		float width_pixels) {
 	builder.lines.push_back({
 			.a = a,
 			.b = b,
-			.color = color_from_rgba8(color),
+			.color = color,
 			.width_pixels = std::max(width_pixels, 1.0f),
 	});
 }
 
 void append_triangle(GizmoMeshBuilder &builder, godot::Vector3 a, godot::Vector3 b, godot::Vector3 c,
-		std::uint32_t color) {
+		godot::Color color) {
 	builder.triangles.push_back({
 			.a = a,
 			.b = b,
 			.c = c,
-			.color = color_from_rgba8(color),
+			.color = color,
 	});
 }
 
 void append_quad(GizmoMeshBuilder &builder, godot::Vector3 a, godot::Vector3 b, godot::Vector3 c, godot::Vector3 d,
-		std::uint32_t color) {
+		godot::Color color) {
 	append_triangle(builder, a, b, c, color);
 	append_triangle(builder, a, c, d, color);
 }
 
-void append_plane(GizmoMeshBuilder &builder, const GizmoPlanePrimitive &plane, std::uint32_t color) {
+void append_plane(GizmoMeshBuilder &builder, const GizmoPlanePrimitive &plane, godot::Color color) {
 	append_quad(builder, plane.world[0], plane.world[1], plane.world[2], plane.world[3], color);
 	append_line(builder, plane.world[0], plane.world[1], color, 1.2f);
 	append_line(builder, plane.world[1], plane.world[2], color, 1.2f);
@@ -582,7 +569,7 @@ void append_plane(GizmoMeshBuilder &builder, const GizmoPlanePrimitive &plane, s
 }
 
 void append_cone_handle(GizmoMeshBuilder &builder, godot::Vector3 base_center, godot::Vector3 tip,
-		std::uint32_t color, float radius_world) {
+		godot::Color color, float radius_world) {
 	godot::Vector3 axis = tip - base_center;
 	const float cone_length = axis.length();
 	if (cone_length <= 0.000001f || radius_world <= 0.000001f) {
@@ -611,7 +598,7 @@ void append_cone_handle(GizmoMeshBuilder &builder, godot::Vector3 base_center, g
 	}
 }
 
-void append_arrow_handle(GizmoMeshBuilder &builder, godot::Vector3 start, godot::Vector3 tip, std::uint32_t color,
+void append_arrow_handle(GizmoMeshBuilder &builder, godot::Vector3 start, godot::Vector3 tip, godot::Color color,
 		float line_width_pixels) {
 	godot::Vector3 direction = tip - start;
 	const float axis_length = direction.length();
@@ -626,7 +613,7 @@ void append_arrow_handle(GizmoMeshBuilder &builder, godot::Vector3 start, godot:
 }
 
 void append_square_prism(GizmoMeshBuilder &builder, godot::Vector3 start, godot::Vector3 end, float half_width_world,
-		std::uint32_t color) {
+		godot::Color color) {
 	godot::Vector3 axis = end - start;
 	const float length_world = axis.length();
 	if (length_world <= 0.000001f || half_width_world <= 0.000001f) {
@@ -663,7 +650,7 @@ void append_square_prism(GizmoMeshBuilder &builder, godot::Vector3 start, godot:
 	append_quad(builder, end_corners[3], end_corners[2], end_corners[1], end_corners[0], color);
 }
 
-void append_scale_handle(GizmoMeshBuilder &builder, godot::Vector3 start, godot::Vector3 tip, std::uint32_t color,
+void append_scale_handle(GizmoMeshBuilder &builder, godot::Vector3 start, godot::Vector3 tip, godot::Color color,
 		float line_width_pixels) {
 	godot::Vector3 direction = tip - start;
 	const float axis_length = direction.length();
@@ -677,7 +664,7 @@ void append_scale_handle(GizmoMeshBuilder &builder, godot::Vector3 start, godot:
 	append_square_prism(builder, block_start, tip, unit_world * kGizmoScaleHalfWidth, color);
 }
 
-void append_cube_handle(GizmoMeshBuilder &builder, godot::Vector3 center, float world_size, std::uint32_t color) {
+void append_cube_handle(GizmoMeshBuilder &builder, godot::Vector3 center, float world_size, godot::Color color) {
 	const float half = world_size * 0.5f;
 	const std::array<godot::Vector3, 8> corners{
 			center + godot::Vector3{-half, -half, -half}, center + godot::Vector3{half, -half, -half},
@@ -693,20 +680,20 @@ void append_cube_handle(GizmoMeshBuilder &builder, godot::Vector3 center, float 
 		append_quad(builder, corners[static_cast<std::size_t>(face[0])], corners[static_cast<std::size_t>(face[1])],
 				corners[static_cast<std::size_t>(face[2])], corners[static_cast<std::size_t>(face[3])], color);
 		append_line(builder, corners[static_cast<std::size_t>(face[0])], corners[static_cast<std::size_t>(face[1])],
-				kScaleCenterOutlineColor, 1.0f);
+				html_color(kScaleCenterOutlineColor), 1.0f);
 		append_line(builder, corners[static_cast<std::size_t>(face[1])], corners[static_cast<std::size_t>(face[2])],
-				kScaleCenterOutlineColor, 1.0f);
+				html_color(kScaleCenterOutlineColor), 1.0f);
 		append_line(builder, corners[static_cast<std::size_t>(face[2])], corners[static_cast<std::size_t>(face[3])],
-				kScaleCenterOutlineColor, 1.0f);
+				html_color(kScaleCenterOutlineColor), 1.0f);
 		append_line(builder, corners[static_cast<std::size_t>(face[3])], corners[static_cast<std::size_t>(face[0])],
-				kScaleCenterOutlineColor, 1.0f);
+				html_color(kScaleCenterOutlineColor), 1.0f);
 	}
 }
 
 void append_rotate_gizmo(GizmoMeshBuilder &builder, const GizmoFrame &frame) {
 	const float width_scale = std::clamp(frame.gizmo_scale, 0.75f, 1.5f);
 	for (const GizmoRingSegment &segment : frame.trackball_segments) {
-		append_line(builder, segment.world_start, segment.world_end, kTrackballColor, 2.25f * width_scale);
+		append_line(builder, segment.world_start, segment.world_end, html_color(kTrackballColor), 2.25f * width_scale);
 	}
 	for (const GizmoRingSegment &segment : frame.ring_segments) {
 		if (!segment.front_facing) {
@@ -723,15 +710,16 @@ void append_move_or_scale_gizmo(GizmoMeshBuilder &builder, const GizmoFrame &fra
 		if (!drag_plane_includes(frame.active_axis, plane.axis)) {
 			continue;
 		}
-		const std::uint32_t color = highlighted(frame, plane.axis) ? highlight_color_for_axis(plane.axis) : color_for_plane(plane.axis);
+		const godot::Color color =
+				highlighted(frame, plane.axis) ? highlight_color_for_axis(plane.axis) : color_for_plane(plane.axis);
 		append_plane(builder, plane, color);
 	}
 	for (const GizmoAxisPrimitive &axis : frame.axes) {
 		if (!drag_axis_includes(frame.active_axis, axis.axis)) {
 			continue;
 		}
-		const std::uint32_t color = highlighted(frame, axis.axis) ? highlight_color_for_axis(axis.axis)
-																  : multiply_color(color_for_axis(axis.axis), 1.0f, axis.alpha);
+		const godot::Color color = highlighted(frame, axis.axis) ? highlight_color_for_axis(axis.axis)
+																 : multiply_color(color_for_axis(axis.axis), 1.0f, axis.alpha);
 		const float line_width = kTransformGizmoAxisLineWidthPixels * width_scale;
 		if (frame.tool == TransformGizmoTool::Scale) {
 			append_scale_handle(builder, axis.world_start, axis.world_tip, color, line_width);
@@ -744,7 +732,7 @@ void append_move_or_scale_gizmo(GizmoMeshBuilder &builder, const GizmoFrame &fra
 			!frame.axes.empty()) {
 		const float axis_length = frame.axes.front().world_start.distance_to(frame.axes.front().world_tip);
 		const float world_size = std::max(0.0001f, axis_length * (kTransformGizmoScaleCenterSizePixels / kTransformGizmoSizePixels));
-		append_cube_handle(builder, frame.pivot, world_size, kAxisHighlightColor);
+		append_cube_handle(builder, frame.pivot, world_size, html_color(kAxisHighlightColor));
 	}
 }
 

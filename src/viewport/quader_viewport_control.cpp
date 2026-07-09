@@ -21,6 +21,7 @@
 #include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/memory.hpp>
+#include <godot_cpp/variant/string.hpp>
 
 #include <algorithm>
 #include <array>
@@ -39,6 +40,7 @@ using quader::modeling::AuthoredPolygonPayload;
 using quader::modeling::EdgeKey;
 using quader::modeling::FaceId;
 using quader::modeling::ObjectId;
+using quader::modeling::OperationReceipt;
 using quader::modeling::SelectionEdit;
 using quader::modeling::SelectionKind;
 using quader::modeling::Vec3;
@@ -173,7 +175,7 @@ float grid_world_size_for_preset(int preset) {
 }
 
 godot::Color box_preview_line_color() {
-	return {1.0f, 235.0f / 255.0f, 41.0f / 255.0f, 209.0f / 255.0f};
+	return godot::Color(godot::String("#ffeb29d1"));
 }
 
 float safe_box_grid_size(float grid_size) {
@@ -360,11 +362,11 @@ godot::Vector3 transform_axis_vector(render::TransformGizmoAxis axis) {
 	return {};
 }
 
-quader::modeling::Vec3 to_modeling(godot::Vector3 value) {
+Vec3 to_modeling(godot::Vector3 value) {
 	return {value.x, value.y, value.z};
 }
 
-quader::modeling::Vec3 axis_radians(render::TransformGizmoAxis axis, float radians) {
+Vec3 axis_radians(render::TransformGizmoAxis axis, float radians) {
 	if (axis == render::TransformGizmoAxis::X) {
 		return {radians, 0.0f, 0.0f};
 	}
@@ -377,8 +379,8 @@ quader::modeling::Vec3 axis_radians(render::TransformGizmoAxis axis, float radia
 	return {};
 }
 
-quader::modeling::Vec3 axis_scale(render::TransformGizmoAxis axis, float factor) {
-	quader::modeling::Vec3 scale{1.0f, 1.0f, 1.0f};
+Vec3 axis_scale(render::TransformGizmoAxis axis, float factor) {
+	Vec3 scale{1.0f, 1.0f, 1.0f};
 	if (axis == render::TransformGizmoAxis::X || axis == render::TransformGizmoAxis::XY ||
 			axis == render::TransformGizmoAxis::XZ) {
 		scale.x = factor;
@@ -621,14 +623,14 @@ bool face_contains_vertex(const AuthoredPolygonFacePayload &face, VertexId verte
 }
 
 bool face_contains_edge(const AuthoredPolygonFacePayload &face, EdgeKey edge) {
-	const EdgeKey normalized = quader::modeling::make_edge_key(edge.a, edge.b);
+	const EdgeKey normalized = make_edge_key(edge.a, edge.b);
 	if (!normalized.valid() || face.vertices.size() < 2U) {
 		return false;
 	}
 	for (std::size_t index = 0; index < face.vertices.size(); ++index) {
 		const VertexId a = face.vertices[index];
 		const VertexId b = face.vertices[(index + 1U) % face.vertices.size()];
-		if (quader::modeling::make_edge_key(a, b) == normalized) {
+		if (make_edge_key(a, b) == normalized) {
 			return true;
 		}
 	}
@@ -1286,7 +1288,7 @@ void QuaderViewportControl::_gui_input(const godot::Ref<godot::InputEvent> &even
 			return;
 		}
 		if (key->get_keycode() == godot::KEY_F && selection_mode_ == SelectionMode::Mesh) {
-			const quader::modeling::OperationReceipt receipt = modeling_.flip_selected_mesh_normals();
+			const OperationReceipt receipt = modeling_.flip_selected_mesh_normals();
 			if (receipt.success && receipt.changed) {
 				refresh_scene_meshes();
 			}
@@ -1305,7 +1307,7 @@ void QuaderViewportControl::_process(double delta) {
 	refresh_overlays_if_dirty();
 }
 
-const render::ViewportVisualSettings &QuaderViewportControl::visual_settings() const {
+const ViewportVisualSettings &QuaderViewportControl::visual_settings() const {
 	return visual_settings_;
 }
 
@@ -1313,7 +1315,7 @@ int QuaderViewportControl::grid_preset() const {
 	return grid_preset_;
 }
 
-void QuaderViewportControl::set_visual_settings(const render::ViewportVisualSettings &settings) {
+void QuaderViewportControl::set_visual_settings(const ViewportVisualSettings &settings) {
 	visual_settings_ = settings;
 	render::apply_ground_grid_settings(grid_material_, visual_settings_);
 	render::apply_default_quader_material_settings(mesh_material_, visual_settings_);
@@ -1866,11 +1868,11 @@ void QuaderViewportControl::commit_box_drag(godot::Vector2 position) {
 		return;
 	}
 
-	std::array<quader::modeling::Vec3, 8> corners{};
+	std::array<Vec3, 8> corners{};
 	for (std::size_t index = 0; index < corners.size(); ++index) {
 		corners[index] = to_modeling(box_preview_.corners[index]);
 	}
-	const quader::modeling::OperationReceipt receipt =
+	const OperationReceipt receipt =
 			modeling_.create_box_from_corners(corners, "Box");
 	box_tool_active_ = false;
 	box_preview_visible_ = false;
@@ -1890,7 +1892,7 @@ std::optional<godot::Vector3> QuaderViewportControl::selected_mesh_pivot(
 		if (!object.mesh_selected) {
 			continue;
 		}
-		for (quader::modeling::Vec3 position : object.authored.positions) {
+		for (Vec3 position : object.authored.positions) {
 			sum += to_godot(position);
 			++count;
 		}
@@ -1908,7 +1910,7 @@ TransformDragBounds QuaderViewportControl::selected_mesh_bounds(
 		if (!object.mesh_selected) {
 			continue;
 		}
-		for (quader::modeling::Vec3 position : object.authored.positions) {
+		for (Vec3 position : object.authored.positions) {
 			const godot::Vector3 point = to_godot(position);
 			if (!bounds.has_bounds) {
 				bounds.has_bounds = true;
@@ -1981,7 +1983,7 @@ void QuaderViewportControl::update_transform_drag(godot::Vector2 position) {
 		return;
 	}
 
-	quader::modeling::OperationReceipt receipt;
+	OperationReceipt receipt;
 	const bool snap_enabled = !keyboard_snap_disabled();
 	if (transform_tool_ == render::TransformGizmoTool::Move) {
 		godot::Vector3 world_delta;

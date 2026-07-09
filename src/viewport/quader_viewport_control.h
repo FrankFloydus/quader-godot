@@ -5,6 +5,7 @@
 #include "render/quader_godot_transform_gizmo.h"
 #include "viewport/quader_camera_controller.h"
 #include "viewport/quader_viewport_selection_mode.h"
+#include "viewport/quader_viewport_visual_settings.h"
 
 #include <godot_cpp/classes/control.hpp>
 #include <godot_cpp/classes/input_event.hpp>
@@ -28,6 +29,9 @@ class WorldEnvironment;
 } // namespace godot
 
 namespace quader_godot::viewport {
+
+using quader::modeling::ObjectId;
+using quader::modeling::SelectionEdit;
 
 struct TransformDragBounds {
 	bool has_bounds = false;
@@ -59,9 +63,9 @@ public:
 	void _notification(int what);
 	void _gui_input(const godot::Ref<godot::InputEvent> &event) override;
 	void _process(double delta) override;
-	[[nodiscard]] const render::ViewportVisualSettings &visual_settings() const;
+	[[nodiscard]] const ViewportVisualSettings &visual_settings() const;
 	[[nodiscard]] int grid_preset() const;
-	void set_visual_settings(const render::ViewportVisualSettings &settings);
+	void set_visual_settings(const ViewportVisualSettings &settings);
 	void set_grid_preset(int preset);
 	void set_grid_preset_changed_callback(std::function<void(int)> callback);
 
@@ -70,7 +74,7 @@ protected:
 
 private:
 	struct SceneMeshNode {
-		quader::modeling::ObjectId object;
+		ObjectId object;
 		std::uint64_t content_revision = 0;
 		godot::MeshInstance3D *instance = nullptr;
 	};
@@ -85,7 +89,7 @@ private:
 	void request_viewport_redraw();
 	void clear_hover();
 	void update_hover(godot::Vector2 position, bool remove_preview);
-	bool select_at(godot::Vector2 position, quader::modeling::SelectionEdit edit);
+	bool select_at(godot::Vector2 position, SelectionEdit edit);
 	void set_transform_tool(render::TransformGizmoTool tool);
 	[[nodiscard]] render::TransformGizmoInput transform_gizmo_input(
 			std::span<const modeling::MeshObjectSnapshot> objects) const;
@@ -123,7 +127,7 @@ private:
 	bool box_drag_active_ = false;
 	bool box_preview_visible_ = false;
 	modeling::SelectionTarget hover_target_;
-	quader::modeling::ObjectId component_source_candidate_;
+	ObjectId component_source_candidate_;
 	godot::Vector3 box_raw_start_;
 	godot::Vector3 box_raw_end_;
 	BoxConstructionPlane box_plane_;
@@ -141,7 +145,7 @@ private:
 	float transform_drag_applied_angle_ = 0.0f;
 	float transform_drag_unsnapped_scale_amount_ = 0.0f;
 	float transform_drag_applied_scale_factor_ = 1.0f;
-	render::ViewportVisualSettings visual_settings_ = render::default_viewport_visual_settings();
+	ViewportVisualSettings visual_settings_ = default_viewport_visual_settings();
 	godot::Ref<godot::Environment> environment_;
 	godot::Ref<godot::ShaderMaterial> grid_material_;
 	godot::Ref<godot::ShaderMaterial> mesh_material_;
