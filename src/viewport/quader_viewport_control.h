@@ -92,9 +92,17 @@ private:
 	[[nodiscard]] gizmo::GizmoMutationResult apply_gizmo_mutation(const gizmo::GizmoMutation &mutation);
 	[[nodiscard]] gizmo::GizmoInput transform_gizmo_input(
 			std::span<const modeling::MeshObjectSnapshot> objects) const;
+	[[nodiscard]] bool has_transform_selection(
+			std::span<const modeling::MeshObjectSnapshot> objects) const;
+	[[nodiscard]] std::optional<godot::Vector3> selected_transform_pivot(
+			std::span<const modeling::MeshObjectSnapshot> objects) const;
+	[[nodiscard]] gizmo::GizmoSelectionBounds selected_transform_bounds(
+			std::span<const modeling::MeshObjectSnapshot> objects) const;
 	[[nodiscard]] std::optional<godot::Vector3> selected_mesh_pivot(
 			std::span<const modeling::MeshObjectSnapshot> objects) const;
 	[[nodiscard]] gizmo::GizmoSelectionBounds selected_mesh_bounds(
+			std::span<const modeling::MeshObjectSnapshot> objects) const;
+	[[nodiscard]] gizmo::GizmoSelectionBounds selected_component_bounds(
 			std::span<const modeling::MeshObjectSnapshot> objects) const;
 	bool begin_transform_drag(godot::Vector2 position);
 	void update_transform_drag(godot::Vector2 position);

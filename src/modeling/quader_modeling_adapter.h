@@ -68,6 +68,11 @@ public:
 			Vec3 pivot);
 	OperationReceipt scale_selected_meshes(Vec3 scale,
 			Vec3 pivot);
+	OperationReceipt translate_selected_components(Vec3 delta);
+	OperationReceipt rotate_selected_components(Vec3 radians,
+			Vec3 pivot);
+	OperationReceipt scale_selected_components(Vec3 scale,
+			Vec3 pivot);
 
 private:
 	[[nodiscard]] std::vector<MeshObjectSnapshot> snapshots(bool include_render_mesh);

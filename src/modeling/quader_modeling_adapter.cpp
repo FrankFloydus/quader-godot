@@ -274,6 +274,20 @@ OperationReceipt QuaderModelingAdapter::scale_selected_meshes(Vec3 scale,
 			[&](MeshHandle mesh) { return mesh.transform().scale({.scale = scale, .pivot = pivot}); });
 }
 
+OperationReceipt QuaderModelingAdapter::translate_selected_components(Vec3 delta) {
+	return api_.operations().translate_selection(delta);
+}
+
+OperationReceipt QuaderModelingAdapter::rotate_selected_components(Vec3 radians,
+		Vec3 pivot) {
+	return api_.operations().rotate_selection({.radians = radians, .pivot = pivot});
+}
+
+OperationReceipt QuaderModelingAdapter::scale_selected_components(Vec3 scale,
+		Vec3 pivot) {
+	return api_.operations().scale_selection({.scale = scale, .pivot = pivot});
+}
+
 OperationReceipt QuaderModelingAdapter::transform_selected_meshes(
 		const std::function<OperationReceipt(MeshHandle)> &operation) {
 	OperationReceipt merged;

@@ -9,6 +9,7 @@
 #include <quader/modeling/api/modeling_api.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -143,6 +144,53 @@ polygon_selection_from_union(const SelectionUnion &selection) {
     stamp.selection = std::max(stamp.selection, object.selection_revision);
   }
   return stamp;
+}
+
+[[nodiscard]] inline Vec3 transform_point(Transform3 transform, Vec3 point) {
+  return {
+      transform.origin.x + transform.x_axis.x * point.x +
+          transform.y_axis.x * point.y + transform.z_axis.x * point.z,
+      transform.origin.y + transform.x_axis.y * point.x +
+          transform.y_axis.y * point.y + transform.z_axis.y * point.z,
+      transform.origin.z + transform.x_axis.z * point.x +
+          transform.y_axis.z * point.y + transform.z_axis.z * point.z,
+  };
+}
+
+[[nodiscard]] inline Transform3 rotation_transform(RotateOptions options) {
+  const float sx = std::sin(options.radians.x);
+  const float cx = std::cos(options.radians.x);
+  const float sy = std::sin(options.radians.y);
+  const float cy = std::cos(options.radians.y);
+  const float sz = std::sin(options.radians.z);
+  const float cz = std::cos(options.radians.z);
+
+  Transform3 transform;
+  transform.x_axis = {cz * cy, sz * cy, -sy};
+  transform.y_axis = {cz * sy * sx - sz * cx, sz * sy * sx + cz * cx,
+                      cy * sx};
+  transform.z_axis = {cz * sy * cx + sz * sx, sz * sy * cx - cz * sx,
+                      cy * cx};
+  const Vec3 rotated_pivot = transform_point(transform, options.pivot);
+  transform.origin = {
+      options.pivot.x - rotated_pivot.x,
+      options.pivot.y - rotated_pivot.y,
+      options.pivot.z - rotated_pivot.z,
+  };
+  return transform;
+}
+
+[[nodiscard]] inline Transform3 scale_transform(ScaleOptions options) {
+  Transform3 transform;
+  transform.x_axis.x = options.scale.x;
+  transform.y_axis.y = options.scale.y;
+  transform.z_axis.z = options.scale.z;
+  transform.origin = {
+      options.pivot.x - options.scale.x * options.pivot.x,
+      options.pivot.y - options.scale.y * options.pivot.y,
+      options.pivot.z - options.scale.z * options.pivot.z,
+  };
+  return transform;
 }
 
 [[nodiscard]] inline OperationReceipt handle_failure(ModelingApiContext &context,

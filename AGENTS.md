@@ -1,13 +1,21 @@
 # Quader Godot Plugin Agent Guide
 
 This repository is the Godot 4 C++ GDExtension port of the Quader modeling editor. Future work here
-is not a generic Godot sample and not a new modeling app from scratch: it is a port of the Quader
-app modeling suite into a Godot editor plugin, keeping behavior visually and semantically aligned
-with the native Windows Quader app.
+is not a generic Godot sample and not a new modeling app from scratch: it is a port of the existing
+standalone Quader app modeling suite into a Godot editor plugin, keeping behavior visually and
+semantically aligned with the native Windows Quader app.
+
+Treat Godot as the current host shell, not as the source of truth for Quader behavior. The long-term
+direction is that the same Quader modeling/editor core should be portable into other hosts later
+such as another game engine plugin, a native shell, or a test harness. Code that represents Quader
+modeling behavior should therefore be written so it can be extracted, copied, or moved without
+dragging Godot editor/window/render/UI dependencies with it.
 
 ## Project Purpose
 
 - Build a Godot editor plugin that exposes Quader modeling inside Godot.
+- Port the standalone Quader Windows app behavior into this plugin; do not reinterpret the product
+  as a Godot-native modeling tool with different semantics.
 - Keep the plugin implemented in C++ GDExtension code.
 - Use GDScript only for the minimal Godot addon entry point where Godot requires it, such as
   `project/addons/quader/plugin.gd`.
@@ -17,6 +25,24 @@ with the native Windows Quader app.
 - Keep reusable Quader editor behavior engine-neutral when it can reasonably survive a later Unity,
   Unreal, or native host port. Godot code is the current host integration, not the permanent home
   for portable editor logic.
+
+## Current Product Direction
+
+The current task stream is porting Quader's modeling suite into a Godot editor plugin while keeping
+portable pieces clear enough to reuse elsewhere. When adding features, start by asking which part of
+the behavior belongs to Quader itself and which part belongs only to Godot integration.
+
+- Quader behavior: modeling operations, selection policy, transform semantics, grid preset meaning,
+  gizmo math, camera/navigation core, overlay policy, and deterministic tool state. Prefer portable
+  plain C++ packages for these when practical.
+- Godot integration: GDExtension registration, editor plugin buttons/windows, `Control` and
+  `SubViewport` ownership, Godot input event translation, Godot material/mesh resources, settings
+  persistence through Godot APIs, and addon files.
+- The native Windows app remains the behavioral reference. If plugin behavior differs from the
+  standalone app, assume the plugin is wrong unless the user explicitly approved a change.
+- When changing copied SDK code inside `src/quader_modeling_sdk`, remember this plugin copy can
+  drift from the standalone app. Keep SDK edits minimal, document why they are needed, and be ready
+  to mirror them back to the app copy when work returns there.
 
 ## Engine-Neutral Core Policy
 
@@ -39,6 +65,8 @@ headers.
   second host exists. Prefer a plain reusable core plus one concrete Godot bridge.
 - When adding a reusable feature, make the copy-paste target obvious: copying that root package
   should not require also copying Godot viewport, render, UI, editor, or settings code.
+- Do not hide portability behind vague abstractions. A small concrete package with plain data types
+  is preferred over generic host interfaces until another host actually exists.
 
 ## Important Local Paths
 
@@ -159,7 +187,9 @@ When parity is in doubt, inspect the native Quader implementation in
 - The scene starts empty. Press `B`, drag a footprint on the ground grid, and release to create a
   Quader SDK box whose height equals the current grid size.
 - Mesh normals can be flipped in mesh selection mode with `F`.
-- Move/rotate/scale use grid/angle snapping by default and Ctrl disables snapping during gizmo drag.
+- Move/rotate/scale work for selected meshes and selected vertex/edge/face components. Move and
+  scale use the current grid size for snapping, rotation snaps by 15 degrees, and Ctrl disables
+  snapping during gizmo drag.
 
 ## Git Workflow
 

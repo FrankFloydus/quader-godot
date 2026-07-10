@@ -138,4 +138,28 @@ if(QUADER_GODOT_BUILD_TESTS)
 
     include(GoogleTest)
     gtest_discover_tests(quader_godot_tests)
+
+    file(GLOB_RECURSE QUADER_MODELING_SDK_TEST_SOURCES CONFIGURE_DEPENDS
+        "${PROJECT_SOURCE_DIR}/src/quader_modeling_sdk/src/*.cpp"
+        "${PROJECT_SOURCE_DIR}/src/quader_modeling_sdk/internal/*.cpp")
+    list(FILTER QUADER_MODELING_SDK_TEST_SOURCES EXCLUDE REGEX "/internal/thirdparty/")
+
+    add_executable(quader_modeling_sdk_tests
+        tests/modeling_sdk_transform_tests.cpp
+        ${QUADER_MODELING_SDK_TEST_SOURCES}
+    )
+    target_include_directories(quader_modeling_sdk_tests
+        PRIVATE
+        "${PROJECT_SOURCE_DIR}/src/quader_modeling_sdk/include"
+        "${PROJECT_SOURCE_DIR}/src/quader_modeling_sdk/internal"
+        "${PROJECT_SOURCE_DIR}/src/quader_modeling_sdk/internal/thirdparty"
+    )
+    target_link_libraries(quader_modeling_sdk_tests PRIVATE GTest::gtest_main)
+    set_property(TARGET quader_modeling_sdk_tests PROPERTY CXX_STANDARD 20)
+    set_property(TARGET quader_modeling_sdk_tests PROPERTY CXX_STANDARD_REQUIRED ON)
+    if(MSVC)
+        target_compile_definitions(quader_modeling_sdk_tests PRIVATE NOMINMAX)
+        target_compile_options(quader_modeling_sdk_tests PRIVATE /bigobj)
+    endif()
+    gtest_discover_tests(quader_modeling_sdk_tests)
 endif()

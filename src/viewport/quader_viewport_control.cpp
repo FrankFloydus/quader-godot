@@ -373,6 +373,21 @@ godot::Vector3 to_godot(Vec3 value) {
 	return {value.x, value.y, value.z};
 }
 
+void include_bounds_point(gizmo::GizmoSelectionBounds &bounds, godot::Vector3 point) {
+	if (!bounds.has_bounds) {
+		bounds.has_bounds = true;
+		bounds.min = point;
+		bounds.max = point;
+		return;
+	}
+	bounds.min.x = std::min(bounds.min.x, point.x);
+	bounds.min.y = std::min(bounds.min.y, point.y);
+	bounds.min.z = std::min(bounds.min.z, point.z);
+	bounds.max.x = std::max(bounds.max.x, point.x);
+	bounds.max.y = std::max(bounds.max.y, point.y);
+	bounds.max.z = std::max(bounds.max.z, point.z);
+}
+
 std::optional<godot::Vector3> vertex_position(const AuthoredPolygonPayload &payload, VertexId vertex) {
 	for (std::size_t index = 0; index < payload.vertices.size() && index < payload.positions.size(); ++index) {
 		if (payload.vertices[index] == vertex) {
@@ -1515,15 +1530,23 @@ void QuaderViewportControl::set_active_gizmo(const gizmo::Gizmo *gizmo) {
 
 gizmo::GizmoMutationResult QuaderViewportControl::apply_gizmo_mutation(const gizmo::GizmoMutation &mutation) {
 	OperationReceipt receipt;
+	const bool component_transform = selection_mode_ != SelectionMode::Mesh;
 	switch (mutation.kind) {
 	case gizmo::GizmoMutationKind::TranslateSelection:
-		receipt = modeling_.translate_selected_meshes(to_modeling(mutation.value));
+		receipt = component_transform ? modeling_.translate_selected_components(to_modeling(mutation.value))
+									  : modeling_.translate_selected_meshes(to_modeling(mutation.value));
 		break;
 	case gizmo::GizmoMutationKind::RotateSelection:
-		receipt = modeling_.rotate_selected_meshes(to_modeling(mutation.value), to_modeling(mutation.pivot));
+		receipt = component_transform ? modeling_.rotate_selected_components(to_modeling(mutation.value),
+												to_modeling(mutation.pivot))
+									  : modeling_.rotate_selected_meshes(to_modeling(mutation.value),
+												to_modeling(mutation.pivot));
 		break;
 	case gizmo::GizmoMutationKind::ScaleSelection:
-		receipt = modeling_.scale_selected_meshes(to_modeling(mutation.value), to_modeling(mutation.pivot));
+		receipt = component_transform ? modeling_.scale_selected_components(to_modeling(mutation.value),
+												to_modeling(mutation.pivot))
+									  : modeling_.scale_selected_meshes(to_modeling(mutation.value),
+												to_modeling(mutation.pivot));
 		break;
 	}
 	return {
@@ -1679,22 +1702,71 @@ gizmo::GizmoSelectionBounds QuaderViewportControl::selected_mesh_bounds(
 			continue;
 		}
 		for (Vec3 position : object.authored.positions) {
-			const godot::Vector3 point = to_godot(position);
-			if (!bounds.has_bounds) {
-				bounds.has_bounds = true;
-				bounds.min = point;
-				bounds.max = point;
-				continue;
-			}
-			bounds.min.x = std::min(bounds.min.x, point.x);
-			bounds.min.y = std::min(bounds.min.y, point.y);
-			bounds.min.z = std::min(bounds.min.z, point.z);
-			bounds.max.x = std::max(bounds.max.x, point.x);
-			bounds.max.y = std::max(bounds.max.y, point.y);
-			bounds.max.z = std::max(bounds.max.z, point.z);
+			include_bounds_point(bounds, to_godot(position));
 		}
 	}
 	return bounds;
+}
+
+gizmo::GizmoSelectionBounds QuaderViewportControl::selected_component_bounds(
+		std::span<const modeling::MeshObjectSnapshot> objects) const {
+	gizmo::GizmoSelectionBounds bounds;
+	for (const modeling::MeshObjectSnapshot &object : objects) {
+		if (!object.selected) {
+			continue;
+		}
+		if (selection_mode_ == SelectionMode::Vertex) {
+			for (VertexId vertex : object.selected_vertices) {
+				if (const std::optional<godot::Vector3> position = vertex_position(object.authored, vertex)) {
+					include_bounds_point(bounds, *position);
+				}
+			}
+		} else if (selection_mode_ == SelectionMode::Edge) {
+			for (EdgeKey edge : object.selected_edges) {
+				if (const std::optional<godot::Vector3> a = vertex_position(object.authored, edge.a)) {
+					include_bounds_point(bounds, *a);
+				}
+				if (const std::optional<godot::Vector3> b = vertex_position(object.authored, edge.b)) {
+					include_bounds_point(bounds, *b);
+				}
+			}
+		} else if (selection_mode_ == SelectionMode::Face) {
+			for (FaceId face_id : object.selected_faces) {
+				const AuthoredPolygonFacePayload *face = find_face(object.authored, face_id);
+				if (face == nullptr) {
+					continue;
+				}
+				for (VertexId vertex : face->vertices) {
+					if (const std::optional<godot::Vector3> position = vertex_position(object.authored, vertex)) {
+						include_bounds_point(bounds, *position);
+					}
+				}
+			}
+		}
+	}
+	return bounds;
+}
+
+bool QuaderViewportControl::has_transform_selection(
+		std::span<const modeling::MeshObjectSnapshot> objects) const {
+	return selected_transform_bounds(objects).has_bounds;
+}
+
+std::optional<godot::Vector3> QuaderViewportControl::selected_transform_pivot(
+		std::span<const modeling::MeshObjectSnapshot> objects) const {
+	if (selection_mode_ == SelectionMode::Mesh) {
+		return selected_mesh_pivot(objects);
+	}
+	const gizmo::GizmoSelectionBounds bounds = selected_component_bounds(objects);
+	if (!bounds.has_bounds) {
+		return std::nullopt;
+	}
+	return (bounds.min + bounds.max) * 0.5f;
+}
+
+gizmo::GizmoSelectionBounds QuaderViewportControl::selected_transform_bounds(
+		std::span<const modeling::MeshObjectSnapshot> objects) const {
+	return selection_mode_ == SelectionMode::Mesh ? selected_mesh_bounds(objects) : selected_component_bounds(objects);
 }
 
 gizmo::GizmoInput QuaderViewportControl::transform_gizmo_input(
@@ -1704,8 +1776,8 @@ gizmo::GizmoInput QuaderViewportControl::transform_gizmo_input(
 	input.active_handle = active_gizmo_drag_ != nullptr ? active_gizmo_drag_->handle() : gizmo::GizmoHandle::None;
 	input.camera = camera_bridge_.camera();
 	input.viewport_size = get_size();
-	input.has_selection = selection_mode_ == SelectionMode::Mesh;
-	if (const std::optional<godot::Vector3> pivot = selected_mesh_pivot(objects)) {
+	input.has_selection = has_transform_selection(objects);
+	if (const std::optional<godot::Vector3> pivot = selected_transform_pivot(objects)) {
 		input.has_pivot = true;
 		input.pivot = *pivot;
 	}
@@ -1713,7 +1785,7 @@ gizmo::GizmoInput QuaderViewportControl::transform_gizmo_input(
 }
 
 bool QuaderViewportControl::begin_transform_drag(godot::Vector2 position) {
-	if (selection_mode_ != SelectionMode::Mesh || active_gizmo_ == nullptr || camera_bridge_.camera() == nullptr) {
+	if (active_gizmo_ == nullptr || camera_bridge_.camera() == nullptr) {
 		return false;
 	}
 	const std::vector<modeling::MeshObjectSnapshot> objects = modeling_.overlay_objects();
@@ -1726,7 +1798,7 @@ bool QuaderViewportControl::begin_transform_drag(godot::Vector2 position) {
 	start.hit = hit;
 	start.screen_position = position;
 	start.pivot = input.pivot;
-	start.selection_bounds = selected_mesh_bounds(objects);
+	start.selection_bounds = selected_transform_bounds(objects);
 	active_gizmo_drag_ = active_gizmo_->begin_drag(start);
 	if (active_gizmo_drag_ == nullptr) {
 		return false;
@@ -1773,8 +1845,7 @@ void QuaderViewportControl::end_transform_drag() {
 }
 
 void QuaderViewportControl::update_transform_gizmo_hover(godot::Vector2 position) {
-	if (selection_mode_ != SelectionMode::Mesh || active_gizmo_ == nullptr || camera_bridge_.camera() == nullptr ||
-			active_gizmo_drag_ != nullptr) {
+	if (active_gizmo_ == nullptr || camera_bridge_.camera() == nullptr || active_gizmo_drag_ != nullptr) {
 		if (gizmo::has_gizmo_handle(hovered_gizmo_handle_) && active_gizmo_drag_ == nullptr) {
 			hovered_gizmo_handle_ = gizmo::GizmoHandle::None;
 			invalidate_overlays();

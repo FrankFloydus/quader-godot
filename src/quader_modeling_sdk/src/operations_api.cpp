@@ -62,11 +62,81 @@ native_plane_cut_request(PlaneCutOptions options) {
   selection.vertices = snapshot.vertices;
   selection.edges = snapshot.edges;
   selection.faces = snapshot.faces;
-  if (selection.vertices.empty() && selection.edges.empty() &&
-      selection.faces.empty()) {
-    return all_face_selection(mesh);
-  }
   return selection;
+}
+
+[[nodiscard]] bool has_component_selection(const SelectionUnion &selection) {
+  return !selection.vertices.empty() || !selection.edges.empty() ||
+         !selection.faces.empty();
+}
+
+[[nodiscard]] SelectionUnion current_component_selection_or_all_faces(
+    ModelingApiContext &context, MeshHandle mesh) {
+  SelectionUnion selection = current_component_selection(context, mesh);
+  return has_component_selection(selection) ? selection : all_face_selection(mesh);
+}
+
+void merge_receipt(OperationReceipt &merged, const OperationReceipt &receipt) {
+  const auto merge_delta = [](ElementDelta &target, const ElementDelta &source) {
+    target.vertices.insert(target.vertices.end(), source.vertices.begin(),
+                           source.vertices.end());
+    target.edges.insert(target.edges.end(), source.edges.begin(),
+                        source.edges.end());
+    target.faces.insert(target.faces.end(), source.faces.begin(),
+                        source.faces.end());
+  };
+
+  merged.success = merged.success && receipt.success;
+  merged.changed = merged.changed || receipt.changed;
+  merged.revisions = receipt.revisions;
+  merged.dirty.topology = merged.dirty.topology || receipt.dirty.topology;
+  merged.dirty.geometry = merged.dirty.geometry || receipt.dirty.geometry;
+  merged.dirty.selection = merged.dirty.selection || receipt.dirty.selection;
+  merged.dirty.materials = merged.dirty.materials || receipt.dirty.materials;
+  merged.dirty.overlays = merged.dirty.overlays || receipt.dirty.overlays;
+  merge_delta(merged.created, receipt.created);
+  merge_delta(merged.deleted, receipt.deleted);
+  merge_delta(merged.affected, receipt.affected);
+  merge_delta(merged.modified, receipt.modified);
+  merge_delta(merged.selection_remap.source, receipt.selection_remap.source);
+  merge_delta(merged.selection_remap.destination,
+              receipt.selection_remap.destination);
+  merged.diagnostics.insert(merged.diagnostics.end(),
+                            receipt.diagnostics.begin(),
+                            receipt.diagnostics.end());
+}
+
+[[nodiscard]] OperationReceipt mutate_selected_component_selections(
+    ModelingApiContext &context, std::span<const MeshHandle> meshes,
+    const std::function<Result<OperationResult>(PolygonDocument &)> &operation) {
+  OperationReceipt merged;
+  bool has_selected_mesh = false;
+  bool transformed_component_selection = false;
+  for (MeshHandle mesh : meshes) {
+    if (!mesh.summary().selected) {
+      continue;
+    }
+    has_selected_mesh = true;
+    const SelectionUnion selection = current_component_selection(context, mesh);
+    if (!has_component_selection(selection)) {
+      continue;
+    }
+    transformed_component_selection = true;
+    const OperationReceipt receipt =
+        direct_mutate_selection(context, selection, operation);
+    if (!receipt.success) {
+      return receipt;
+    }
+    merge_receipt(merged, receipt);
+  }
+
+  if (!has_selected_mesh) {
+    return unsupported(context, "No selected mesh.");
+  }
+  if (!transformed_component_selection) {
+    return unsupported(context, "No polygon elements are selected.");
+  }
+  return merged;
 }
 
 [[nodiscard]] Transform3 mirror_transform(Axis axis) {
@@ -545,29 +615,29 @@ OperationReceipt OperationsApi::combine_meshes() {
 }
 
 OperationReceipt OperationsApi::translate_selection(Vec3 delta) {
-  Result<OperationResult> result = context_->session.translate_selection(delta);
-  if (!result.ok()) {
-    return handle_failure(*context_, result.error());
-  }
-  return receipt_from_result(result.value(), current_revisions(*context_));
+  const std::vector<MeshHandle> meshes = MeshCollection(context_).all();
+  return mutate_selected_component_selections(
+      *context_, meshes, [&](PolygonDocument &document) {
+        return document.translate_selection(delta);
+      });
 }
 
 OperationReceipt OperationsApi::transform_selection(TransformOptions options) {
-  MeshHandle mesh = MeshCollection(context_).first_selected();
-  return mesh.valid() ? mesh.transform().apply(options)
-                      : unsupported(*context_, "No selected mesh.");
+  const std::vector<MeshHandle> meshes = MeshCollection(context_).all();
+  return mutate_selected_component_selections(
+      *context_, meshes, [&](PolygonDocument &document) {
+        return document.transform_selection(options.transform);
+      });
 }
 
 OperationReceipt OperationsApi::rotate_selection(RotateOptions options) {
-  MeshHandle mesh = MeshCollection(context_).first_selected();
-  return mesh.valid() ? mesh.transform().rotate(options)
-                      : unsupported(*context_, "No selected mesh.");
+  return transform_selection(
+      {.transform = rotation_transform(options), .pivot = options.pivot});
 }
 
 OperationReceipt OperationsApi::scale_selection(ScaleOptions options) {
-  MeshHandle mesh = MeshCollection(context_).first_selected();
-  return mesh.valid() ? mesh.transform().scale(options)
-                      : unsupported(*context_, "No selected mesh.");
+  return transform_selection(
+      {.transform = scale_transform(options), .pivot = options.pivot});
 }
 
 OperationReceipt OperationsApi::extrude(ExtrudeOptions options) {
@@ -587,7 +657,8 @@ OperationReceipt OperationsApi::mirror_selection(Axis axis) {
   if (!mesh.valid()) {
     return unsupported(*context_, "No selected mesh.");
   }
-  const SelectionUnion selection = current_component_selection(*context_, mesh);
+  const SelectionUnion selection =
+      current_component_selection_or_all_faces(*context_, mesh);
   const Transform3 transform = mirror_transform(axis);
   return direct_mutate_selection(*context_, selection,
                                  [&](PolygonDocument &document) {
